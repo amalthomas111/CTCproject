@@ -1,0 +1,6 @@
+index: "/home/rcf-40/amalthom/panases_soft/bwa_index/hg19/hg19"
+tempdir: "/home/rcf-40/amalthom/staging_work"
+chrom_file: "/home/rcf-40/mengzhou/panfs/genome/coordinates/hg19.sizes"
+ref_seq: "/home/rcf-40/amalthom/panases_soft/genomes/human/hg19/hg19.fasta"
+exome_list: "/home/rcf-40/amalthom/panases_soft/genomes/gatk_resources/hg19_exome.bed"
+gatk_jar: "/home/rcf-40/amalthom/panases_soft/exome/GenomeAnalysisTK.jar"

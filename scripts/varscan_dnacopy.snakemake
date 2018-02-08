@@ -1,0 +1,67 @@
+import os,sys
+
+configfile: 'varscan_dnacopy_config.yaml'
+SAMPLE=[]
+SAMPLE_SRR={}
+for line in open("unfinishedbam_matched_pair.tsv"):
+    if line!="" and line!="\n":
+            elements=line.strip().split("\t")
+            SAMPLE.append(elements[2])
+            SAMPLE_SRR[elements[2]]=[elements[0],elements[1]]
+
+#print(SAMPLE)
+#print(SAMPLE_SRR)
+def return_normal(wildcards):
+        return("bams/"+SAMPLE_SRR[wildcards.sample][1]+".sorted.nodup.bam")
+
+def return_mets(wildcards):
+        return("bams/"+SAMPLE_SRR[wildcards.sample][0]+".sorted.nodup.bam")
+rule all:
+        input:
+                expand("varscandata/{sample}.copynumber",sample=SAMPLE),
+                expand("varscandata/{sample}.called.gc",sample=SAMPLE),
+                expand("varscandata/{sample}.called",sample=SAMPLE),
+                expand("CNVsegments/{sample}_CNV.cb.tsv",sample=SAMPLE),
+                expand("plots/{sample}_CNV.pdf",sample=SAMPLE)
+rule pileup_varscan:
+        input:
+                mets = return_mets,
+                normal = return_normal
+        output:
+                copynumber = "varscandata/{sample}.copynumber"
+        params:
+                "varscandata/{sample}"
+        message:
+                "pileup and copy number for {wildcards.sample}"
+        shell:
+                """
+                samtools mpileup -q 1 -B -f {config[ref_seq]} \
+                {input.normal} {input.mets}| java -jar \
+                {config[varscan_jar]} copynumber --mpileup \
+                {params} 1
+                """
+rule adjustgc:
+        input:
+                "varscandata/{sample}.copynumber"
+        output:
+                called = "varscandata/{sample}.called",
+                calledgc = "varscandata/{sample}.called.gc"
+        message:
+                "adjustgc for {wildcards.sample}"
+        shell:
+                """
+                java -jar {config[varscan_jar]} copyCaller {input} \
+                --output-file  {output.called}
+                """
+rule DNAcopy:
+        input:
+                "varscandata/{sample}.called"
+        output:
+                segments = "CNVsegments/{sample}_CNV.cb.tsv",
+                plot = "plots/{sample}_CNV.pdf"
+        message:
+                "Plotting DNAcopy for {wildcards.sample}"
+        shell:
+                """
+                Rscript getCNV.R {input} {wildcards.sample}
+                """

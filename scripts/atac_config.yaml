@@ -1,0 +1,7 @@
+genome: "hg19"
+hg19_bowtie2_index: "/home/rcf-40/amalthom/panases_soft/2.genome/bowti2_index/hg19/hg19"
+hg19_blacklist: "/home/rcf-40/amalthom/panases_soft/hg19_blacklist/hg19_atac_consensusBlacklist.bed"
+hg19_sizes: "/home/rcf-40/amalthom/panases_soft/hg19.sizes"
+mm10_blacklist: "/home/rcf-40/amalthom/panases_soft/mm10_blacklist/mm10.blacklist.bed"
+mm10_sizes: "/home/rcf-40/amalthom/panases_soft/genomes/sizes/mouse.mm10.genome.sizes"
+picard_markdup: "/home/rcf-40/amalthom/panases_soft/picard_1.122/MarkDuplicates.jar"

@@ -1,0 +1,108 @@
+import os, sys, glob
+
+configfile: 'exome_config.yaml'
+SAMPLES = [sra.strip() for sra in open("remaininglist.txt")]
+#FILES = glob.glob('sra/*_1.fastq.gz')
+#SAMPLES = [file.split('/')[1] for file in FILES]
+#SAMPLES = [file[:file.rfind('_1')] for file in SAMPLES]
+print("\n-----------------------------\n",SAMPLES,
+"\n------------------------------------\n")
+
+rule all:
+    input:
+        expand("quality/{sample}_1_fastqc.html",sample = SAMPLES),
+        expand("quality/{sample}_2_fastqc.html",sample = SAMPLES),
+        expand('bams/{sample}.sorted.nodup.bam',sample = SAMPLES),
+        expand('coverage/{sample}.sample_interval_statistics',sample = SAMPLES),
+        expand('coverage/{sample}.sample_interval_summary',sample = SAMPLES),
+        expand('coverage/{sample}.sample_statistics',sample = SAMPLES),
+        expand('coverage/{sample}.sample_summary',sample = SAMPLES)
+
+rule fastqdump:
+    input:
+        "sra/{sample}.sra"
+    output:
+        dir = "sra",
+        mate1 = temp("sra/{sample}_1.fastq.gz"),
+        mate2 = temp("sra/{sample}_2.fastq.gz")
+    shell:
+        """
+        fastq-dump --gzip --skip-technical --split-3 --dumpbase {input} -O {output.dir}
+        """
+
+rule fastqc:
+    input:
+        mate1 = 'sra/{sample}_1.fastq.gz',
+        mate2 = 'sra/{sample}_2.fastq.gz'
+    output:
+        dir = "quality",
+        output1 = "quality/{sample}_1_fastqc.html",
+        output2 = "quality/{sample}_2_fastqc.html"
+    message:
+        "fastqc for {wildcards.sample}."
+    log:
+        "logs/{sample}.fastqc.log"
+    shell:
+        """
+            fastqc {input.mate1} {input.mate2} -o {output.dir} 2> {log}
+        """
+
+
+rule bwa_mapping:
+    input:
+        mate1 = 'sra/{sample}_1.fastq.gz',
+        mate2 = 'sra/{sample}_2.fastq.gz'
+    output:
+        sortedbam = temp("bams/{sample}.sorted.bam"),
+        sortednodupbam = "bams/{sample}.sorted.nodup.bam"
+    params:
+        rg="@RG\tID:{sample}\tSM:{sample}"
+    message:
+        "bwa mem mapping for {wildcards.sample}"
+    threads:8
+    log:
+        "logs/{sample}.bwa.log"
+    shell:
+        """
+        bwa mem -R '{params.rg}' -t 8 {config[index]} {input.mate1} {input.mate2} | samtools \
+        view -bS -F 4 - | sambamba sort -t 8 --tmpdir={config[tempdir]} -m 18G \
+        -o {output.sortedbam} /dev/stdin >{log} 2>&1
+        sambamba index -t 8 {output.sortedbam}
+        sambamba markdup -r -t 8 {output.sortedbam} --tmpdir \
+         {config[tempdir]} {output.sortednodupbam}
+        """
+
+# rule pileup:
+#     input:
+#         "bams/{sample}.sorted.nodup.bam"
+#     output:
+#         "pileups/{sample}.pileup"
+#     message:
+#         "Creating pileup for {wildcards.sample}"
+#     log:
+#         "logs/{sample}.pileup"
+#     shell:
+# 	    """
+# 	    samtools mpileup  -f {config[ref_seq]} -o {output} {input}
+# 	    """
+
+rule gatkcoverage:
+    input:
+        "bams/{sample}.sorted.nodup.bam"
+    output:
+        output1="coverage/{sample}.sample_summary",
+        output2="coverage/{sample}.sample_statistics",
+        output3="coverage/{sample}.sample_interval_summary",
+        output4="coverage/{sample}.sample_interval_statistics"
+    params:
+        prefix="coverage/{sample}"
+    message:
+        "gatkcoverage for {wildcards.sample}"
+    log:
+        "logs/{sample}.coverage"
+    shell:
+        """
+        java -jar {config[gatk_jar]} -T DepthOfCoverage -omitBaseOutput \
+         -omitLocusTable -R {config[ref_seq]} -I {input} -L {config[exome_list]} \
+          -ct 10 -ct 20 -o {params.prefix} > {log} 2>&1
+        """

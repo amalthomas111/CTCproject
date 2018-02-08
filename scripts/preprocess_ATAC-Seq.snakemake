@@ -1,0 +1,263 @@
+import os,glob
+
+configfile: 'atac_config.yaml'
+if not os.path.isdir("rawreads"):
+        print("rawreads directory with sra file not found\nExiting!!\n")
+        exit(0)
+FASTQ_FILES = glob.glob('rawreads/*.sra')
+SAMPLES = [sra.split('/')[1] for sra in FASTQ_FILES]
+SAMPLES = [sra[:sra.rfind('.')] for sra in SAMPLES]
+
+#print(SAMPLES)
+def return_bowtie2index(wildcards):
+        if config["genome"]=="hg19":
+                return(config["hg19_bowtie2_index"])
+        elif config["genome"]=="mm10":
+                return(config["mm10_bowtie2_index"])
+def get_chrom_size(wildcards):
+        if config["genome"]=="hg19":
+                return(config["hg19_sizes"])
+        elif config["genome"]=="mm10":
+                return(config["mm10_sizes"])
+def get_blacklist(wildcards):
+        if config["genome"]=="hg19":
+                return(config["hg19_blacklist"])
+        elif config["genome"]=="mm10":
+                return(config["mm10_blacklist"])
+
+rule all:
+        input:
+                expand('bams/{sample}.sorted.bam',sample=SAMPLES),
+                expand('beds/{sample}.sorted.chr.nodup.filt.shift.bed',
+                sample=SAMPLES),
+                expand('bams/{sample}.sorted.chr.nodup.filt.bam',
+                sample=SAMPLES),
+                expand('tracks/default/{sample}.bb',sample=SAMPLES),
+                expand('tracks/q1e5/{sample}.bb',sample=SAMPLES),
+                expand('peaks/default/{sample}_peaks.narrowPeak.cleared'
+                ,sample=SAMPLES),
+                expand('peaks/default/{sample}_peaks.narrowPeak.cleared'
+                ,sample=SAMPLES),
+                expand("quality/{sample}_1_fastqc.html",sample=SAMPLES),
+                expand("quality/{sample}_1_fastqc.html",sample=SAMPLES),
+                expand("tracks/{sample}.bw",sample=SAMPLES),
+                expand("quality/{sample}_insertsize.txt",
+                sample=SAMPLES)
+
+rule fastqdump:
+        input:
+                "rawreads/{sample}.sra"
+        output:
+                dir = "rawreads",
+                mate1 = temp("rawreads/{sample}_1.fastq.gz"),
+                mate2 = temp("rawreads/{sample}_2.fastq.gz")
+        shell:
+                """
+                fastq-dump --gzip --skip-technical --split-3 --dumpbase \
+                {input} -O {output.dir}
+                """
+rule fastqc:
+        input:
+                mate1 = 'rawreads/{sample}_1.fastq.gz',
+                mate2 = 'rawreads/{sample}_2.fastq.gz'
+        output:
+                output1 = "quality/{sample}_1_fastqc.html",
+                output2 = "quality/{sample}_2_fastqc.html"
+        message:
+                "fastqc for {wildcards.sample}."
+        params:
+                "quality"
+        log:
+                "logs/{sample}.fastqc.log"
+        shell:
+                """
+                fastqc {input.mate1} {input.mate2} -o {params} 2> {log}
+                """
+
+
+rule trim_galore:
+        input:
+                mate1 = "rawreads/{sample}_1.fastq.gz",
+                mate2 = "rawreads/{sample}_2.fastq.gz"
+        output:
+                mate1 = temp("rawreads/{sample}_1_val_1.fq.gz"),
+                mate2 = temp("rawreads/{sample}_2_val_2.fq.gz")
+                
+        shell:
+                """
+                trim_galore --paired {input.mate1} {input.mate2} \
+                --output_dir rawreads
+                """
+rule bowtie2_mapping:
+        input:
+                mate1 = "rawreads/{sample}_1_val_1.fq.gz",
+                mate2 = "rawreads/{sample}_2_val_2.fq.gz"
+        params:
+                index = return_bowtie2index,
+        output:
+                protected("bams/{sample}.sorted.bam")
+        threads:8
+        shell:
+                """
+                bowtie2 -p 8 -X 2000 --fr --no-discordant --no-mixed --minins \
+                38 -x  {params.index} -1 {input.mate1} -2 {input.mate2}| \
+                samtools view -bS - | samtools sort - -o {output}
+                samtools index {output}
+                """
+rule remove_unwanted_chroms:
+        input:
+                'bams/{sample}.sorted.bam'
+        output:
+                temp('bams/{sample}.sorted.chr.bam')
+        shell:
+                """
+                samtools view -h {input} | awk 'substr($0,1,1) == "@" ||\
+                (length($3) <= 5 && $3 != "chrM" && $3 != "*") {{print $0}}' \
+                | samtools view -bS - > {output}
+                """
+rule remove_duplicates:
+        input:
+                'bams/{sample}.sorted.chr.bam'
+        output:
+                temp('bams/{sample}.sorted.chr.nodup.bam')
+        params:
+                prefix = 'bams/{sample}'
+        shell:
+                """
+                java -Xmx2g -jar {config[picard_markdup]} \
+                INPUT={input} \
+                METRICS_FILE={params.prefix}.markdup.metrics \
+                OUTPUT={output} \
+                REMOVE_DUPLICATES=true \
+                ASSUME_SORTED=true
+                """
+rule filter_bam:
+        input:
+                'bams/{sample}.sorted.chr.nodup.bam'
+        output
+                protected('bams/{sample}.sorted.chr.nodup.filt.bam')
+        shell:
+                """
+                 samtools view -b -h -q 30 {input} > {output}
+                 samtools index {output}
+                """
+rule bam_to_sorted_bed:
+        input:
+                'bams/{sample}.sorted.chr.nodup.filt.bam'
+        output:
+                'beds/{sample}.sorted.chr.nodup.filt.shift.bed'
+        params:
+                temp1 = '{sample}.temp.bed',
+                temp2 = '{sample}.insert.temp'
+        shell:
+                """
+                bamToBed -i {input} > {params.temp1}
+                samtools view {input} |\
+                awk 'BEGIN{{OFS="\t"}}{{print $1,$9}}' > {params.temp2}
+                paste {params.temp1} {params.temp2} | \
+                awk 'BEGIN{{OFS="\t"}}{{split($4,name,"/");\
+                if(name[1]== $7 && $6 == "+" )\
+                {{print $1,$2+4,$3,$4,$8,$6}} \
+                else if(name[1]== $7 && $6 == "-" )\
+                {{print $1,$2,$3-5,$4,$8,$6}}\
+                else {{print "ERROR",name[1],$7}} }}' > {output}
+                rm {params.temp1} {params.temp2}
+                """
+
+rule make_bedgraph_and_bigwig:
+        input:
+                bam = 'bams/{sample}.sorted.chr.nodup.filt.bam',
+                bed = 'beds/{sample}.sorted.chr.nodup.filt.shift.bed',
+                chrom_size = get_chrom_size
+        output:
+                bedgraph = temp('beds/{sample}.bedgraph'), 
+                bigwig = 'tracks/{sample}.bw'
+        shell:
+                """
+                librarySize=$(samtools view -c -F 4 {input.bam})
+                expr="1000000 / $librarySize"
+                scaling_factor=$(echo $expr | bc -l)
+                echo "[librarySize: $librarySize]" 
+                echo "[scaling_factor: $scaling_factor]"
+
+                awk '{{if(length($1)<=5){{print $0}}}}' {input.bed} |\
+                sort -k1,1 -k2,2n |bedtools genomecov -i stdin  \
+		-g {input.chrom_size}  -bg -scale $scaling_factor \
+                > {output.bedgraph}
+                bedGraphToBigWig {output.bedgraph} {input.chrom_size} \
+                {output.bigwig}
+                """
+
+rule call_macs_peaks:
+        input:
+                'beds/{sample}.sorted.chr.nodup.filt.shift.bed'
+        output:
+                peak_file1 = 'peaks/default/{sample}_peaks.narrowPeak',
+                peak_file2 = 'peaks/q1e5/{sample}_peaks.narrowPeak'
+        params:
+                prefix = '{sample}'
+        shell:
+                """
+                source activate py2.7
+                macs2 callpeak --gsize hs -f BED \
+                --treatment {input} --outdir peaks/default \
+                --name {params.prefix} --qvalue 0.01 --keep-dup all \
+                --call-summits --shift -100 --extsize 200 --nomodel \ 
+                --nolambda  --verbose 3
+                macs2 callpeak --gsize hs -f BED --treatment {input} \
+                --outdir peaks/q1e5 --name {params.prefix} --qvalue 1e-5 \
+                --keep-dup all --call-summits --shift -100 --extsize 200 \
+                --nomodel --nolambda --verbose 3
+                """
+
+rule remove_blacklist:
+        input:
+                peak1 = 'peaks/default/{sample}_peaks.narrowPeak',
+                peak2 = 'peaks/q1e5/{sample}_peaks.narrowPeak',
+                blacklist = get_blacklist
+        output:
+                peak1 = 'peaks/default/{sample}_peaks.narrowPeak.cleared',
+                peak2 = 'peaks/q1e5/{sample}_peaks.narrowPeak.cleared'
+        shell:
+                """
+                intersectBed -v -a {input.peak1} -b {input.blacklist} \
+                > {output.peak1}
+                intersectBed -v -a {input.peak2} -b {input.blacklist} \
+                > {output.peak2}
+                """
+rule make_peak_track:
+        input:
+                peak1 = 'peaks/default/{sample}_peaks.narrowPeak.cleared',
+                peak2 = 'peaks/q1e5/{sample}_peaks.narrowPeak.cleared',
+                chrom_size = get_chrom_size
+        output:
+                bigbed1 = 'tracks/default/{sample}.bb',
+                bigbed2 = 'tracks/q1e5/{sample}.bb'
+        params:
+                temp1 = 'tracks/default/{sample}.temp',
+                temp2 = 'tracks/q1e5/{sample}.temp'
+        shell:
+                """
+                awk '{{OFS="\t"; print $1, $2, $3}}' {input.peak1} \
+                | sort -k 1,1 -k 2,2n > {params.temp1}
+                bedToBigBed {params.temp1} {input.chrom_size}\
+                {output.bigbed1}
+                awk '{{OFS="\t"; print $1, $2, $3}}' {input.peak2} \
+                | sort -k 1,1 -k 2,2n > {params.temp2}
+                bedToBigBed {params.temp2} {input.chrom_size}\
+                {output.bigbed2}
+
+                rm {params.temp1}
+                rm {params.temp2}
+                """
+rule plot_insertsize:
+        input:
+                "bams/{sample}.sorted.chr.nodup.filt.bam"
+        output:
+                "quality/{sample}_insertsize.txt"
+        shell:
+                """
+                samtools view -f66 {input} |cut -f 9|sed 's/^-//' > \
+                {output}
+                Rscript getinsertsize.R {output}
+                """

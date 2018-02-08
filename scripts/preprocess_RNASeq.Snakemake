@@ -1,0 +1,63 @@
+import os,glob
+
+configfile: 'config.yaml'
+
+FASTQ_FILES = glob.glob('rawreads/*.fastq')
+SAMPLES = [fastq.split('/')[-1] for fastq in FASTQ_FILES]
+SAMPLES = [fastq[:fastq.rfind('.')] for fastq in SAMPLES]
+
+
+rule all:
+    input:
+        expand('bams/{sample}.bam',sample=SAMPLES)
+
+rule trim_adapters:
+    input:
+        'rawreads/{sample}.fastq'
+    output:
+        'reads/{sample}_trimmed.fastq'
+    message:
+        "Executing fastqc on {wildcards.sample}."
+    log:
+        "logs/{sample}.trim.log"
+    shell:
+        """
+        fastqc {input} -o quality
+        trim_galore --length 10 --output_dir reads {input} &> {log}
+        mv reads/{wildcards.sample}_trimmed.fq {output}
+        """
+
+rule map_single_end:
+    input:
+        'reads/{sample}_trimmed.fastq'
+    output:
+        bam   = 'bams/{sample}.bam',
+        wig   = 'tracks/{sample}.wig',
+        count = 'counts/{sample}.counts'
+    threads: 8
+    params:
+        prefix = 'bams/{sample}.'
+    message:
+        "Executing map with threads on {wildcards.sample}."
+    log:
+        "logs/{sample}.map.log"
+    shell:
+        """
+        STAR --quantMode GeneCounts\
+        --outFileNamePrefix {params.prefix}\
+        --outSAMtype BAM SortedByCoordinate\
+        --bamRemoveDuplicatesType UniqueIdentical\
+        --runThreadN 8\
+        --outBAMsortingThreadN 8\
+        --outWigType wiggle\
+        --outWigStrand Unstranded\
+        --outWigNorm RPM\
+        --readFilesCommand cat\
+        --genomeDir {config[index]}\
+        --readFilesIn {input} &> {log}
+
+        mv {params.prefix}Aligned.sortedByCoord.out.bam {output.bam}
+        mv {params.prefix}Signal.Unique.str1.out.wig {output.wig}
+        mv {params.prefix}ReadsPerGene.out.tab       {output.count}
+        mv {params.prefix}*.out {params.prefix}*.tab temp
+        """
