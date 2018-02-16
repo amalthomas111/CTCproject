@@ -1,0 +1,372 @@
+---
+title: "RNA-Seq & ATAC PCA"
+output: html_notebook
+author: A. Thomas
+---
+
+This notebook shows how PCA plot was generated for ATAC and RNA-Seq datasets
+
+Load libraries
+```{r}
+suppressPackageStartupMessages({
+  library(DESeq2)
+  library(ggplot2)
+  library(gplots)
+  library(RColorBrewer)
+  source("heatmap.3.R")
+})
+```
+
+
+## RNA-Seq PCA
+
+Read counts table and design matrix for RNAseq
+```{r}
+outputname="RNAseq_figures"
+path="data/"
+df = read.table(paste0(path,"RNAseq_rawcounts.tsv"),row.names = 1)
+dim(df)
+df = df[rowSums(df) > 10,]
+dim(df)
+design = read.table(paste0(path,"RNAseq_design_matrix.tsv"),sep="\t",header = T,row.names = 1)
+design.matrix = as.data.frame(design[match(colnames(df),rownames(design)),])
+dim(design.matrix)
+```
+
+```{r}
+head(design.matrix)
+```
+
+Create DeSEQ2 object and do a VST tranformation of counts
+```{r}
+dds  = DESeqDataSetFromMatrix(countData= df, colData= design.matrix, ~ 1)
+dds =  DESeq(dds)#, minReplicatesForReplace=Inf)
+# dds <- estimateSizeFactors(dds)
+# dds <- estimateDispersions(dds)
+# dds <- nbinomWaldTest(dds, maxit=500)
+rld <-varianceStabilizingTransformation(dds,blind = TRUE)
+```
+```{r, echo=FALSE}
+mainDir=getwd()
+subDir="Robjects"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+save(dds,file = "Robjects/RNAseq_dds.Robj")
+save(dds,file = "Robjects/RNAseq_rld.Robj")
+```
+
+
+Lets plots PCA for RNA-Seq based on the top 1K most variable genes.
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld, ntop= 1000, intgroup=c("cellline","parenttype"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+#pdf(file =  paste0("plots/",outputname,"_RNA_PCA.pdf"))
+
+ggplot(data, aes(PC1, PC2,col=cellline, shape=parenttype))+ theme_bw() +
+  theme(panel.border= element_rect(colour = "black",size=0.1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) + geom_point(size=3)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_RNA_PCA_top1K.pdf"),dpi=300 )
+```
+
+## RNA-Seq with pubilc datasets
+```{r}
+outputname="RNAseq_with_public_datasets"
+path="data/"
+df_private = read.table(paste0(path,"RNAseq_rawcounts.tsv"),sep="\t",header = TRUE,row.names = 1)
+dim(df_private)
+design_private = read.table(paste0(path,"RNAseq_design_matrix.tsv"),sep="\t",header = TRUE,row.names = 1)
+design_private = as.data.frame(design_private[match(colnames(df_private),rownames(design_private)),])
+design_private = data.frame(filename = rownames(design_private), celline = design_private$cellline)
+dim(design.matrix)
+df_public=read.table(paste0(path,"RNAseq_public_breast_cancer_count.tsv"),sep = "\t",row.names = 1,header = TRUE)
+design_public = data.frame(filename=colnames(df_public),celline=rep("publicbreastcancer",ncol(df_public)))
+```
+
+
+```{r}
+df_combined = cbind(df_private,df_public)
+df_combined = df_combined[rowSums(df_combined) > 50,]
+dim(df_combined)
+design.matrix = rbind(design_private,design_public)
+```
+
+ DESEQ2 call
+```{r}
+dds  = DESeqDataSetFromMatrix(countData= df_combined, colData= design.matrix, ~ 1)
+dds =  DESeq(dds)#, minReplicatesForReplace=Inf)
+# dds <- estimateSizeFactors(dds)
+# dds <- estimateDispersions(dds)
+# dds <- nbinomWaldTest(dds, maxit=500)
+rld <-varianceStabilizingTransformation(dds,blind = TRUE)
+save(dds,file = paste0("Robjects/",outputname,"_dds.Robj"))
+save(rld,file = paste0("Robjects/",outputname,"_rld.Robj"))
+```
+
+
+```{r}
+colData(rld)$cellline =design.matrix$celline
+colData(rld)$cellline = factor(colData(rld)$cellline)
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld, intgroup=c("cellline"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+#pdf(file =  paste0("plots/",outputname,"_RNA_PCA.pdf"))
+
+ggplot(data, aes(PC1, PC2,col=cellline))+ theme_bw() +
+  theme(panel.border= element_rect(colour = "black",size=0.1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) + geom_point(size=3)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_RNA_PCA_top500genes.pdf"),dpi=300 )
+```
+
+plot PCA for top 1K variable genes
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld, ntop = 1000, intgroup=c("cellline"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+#pdf(file =  paste0("plots/",outputname,"_RNA_PCA.pdf"))
+
+ggplot(data, aes(PC1, PC2,col=cellline))+ theme_bw() +
+  theme(panel.border= element_rect(colour = "black",size=0.1),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) + geom_point(size=3)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_PCA_1k.pdf"),dpi=300 )
+```
+
+
+plot PCA for top 500 variable genes
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld, intgroup=c("cellline"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+#pdf(file =  paste0("plots/",outputname,"_RNA_PCA.pdf"))
+
+ggplot(data, aes(PC1, PC2, col=cellline,label=rownames(colData(rld))))+ theme_bw() + 
+  theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+    xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  geom_text(size=1.5,check_overlap = FALSE,show.legend = F)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_PCA_text_500.pdf"),dpi=300,width=8.5,height=8.5)
+```
+
+plot PCA for top 1K variable genes
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld,  ntop = 1000,intgroup=c("cellline"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+#pdf(file =  paste0("plots/",outputname,"_RNA_PCA.pdf"))
+ggplot(data, aes(PC1, PC2, col=cellline,label=rownames(colData(rld))))+ theme_bw() + 
+  theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+    xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  geom_text(size=1.5,check_overlap = FALSE,show.legend = F)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_PCA_text_1K.pdf"),dpi=300,width=8.5,height=8.5)
+```
+
+
+## ATAC-Seq PCA plot
+
+
+```{r}
+create_granges_frombed3 = function(gr1){
+  gr = GRanges(seqnames=gr1$chr,
+               ranges=IRanges(start=gr1$start+1,end=gr1$end),
+               strand=rep("*",nrow(gr1)))
+  return(gr)
+}
+```
+
+Read counts table
+
+```{r}
+outputname= "ATAC"
+path="data/"
+df= read.table(paste0(path,"ATAC-Seq_rawcounts.tsv"),sep = "\t",header = T,row.names = 1)
+dim(df)
+df_new = df[rowSums(df) >100,]
+dim(df_new)
+bedfile="atac_peaks.merged.bed"
+df_bed = read.table(paste0(path,bedfile),sep = "\t",col.names = c("chr","start","end"))
+dim(df_bed)
+df_bed = df_bed[as.logical(rowSums(df)>100),]
+df_bed_granges = create_granges_frombed3(df_bed)
+```
+
+Read design.matrix
+```{r}
+design = read.table(paste0(path,"atac_design_matrix.tsv"),sep = "\t",header = T,row.names = 1)
+design.matrix = as.data.frame(design[match(colnames(df_new),rownames(design)),])
+head(design.matrix)
+```
+
+DeSEQ2 call
+```{r}
+dds = DESeqDataSetFromMatrix(df_new, design.matrix,~1,rowRanges=df_bed_granges)
+dds = DESeq(dds)
+rld = varianceStabilizingTransformation(dds, blind=TRUE)
+```
+
+```{r}
+save(dds,file = "Robjects/atac_dds.Robj")
+save(dds,file = "Robjects/atac_rld.Robj")
+```
+
+Plot PCA
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld, ntop= 1000,intgroup=c("cellline","parentype"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+ggplot(data, aes(PC1, PC2,col=cellline, shape=parentype))+ theme_bw() +
+  theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) + geom_point(size=3)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_ATAC_PCA_top1KDEsites.pdf") )
+```
+
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld,intgroup=c("cellline","parentype"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+ggplot(data, aes(PC1, PC2,col=cellline, shape=parentype))+ theme_bw() +
+  theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) + geom_point(size=3)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_PCA_top500DEsites.pdf") )
+```
+
+
+
+ATAC on gene promoters (+/- 2.5 Kb)
+```{r}
+outputname= "ATAC_hg19promoter_2.5KbTSS"
+path="data/"
+df= read.table(paste0(path,"allpeaks_11Feb2018_hg19prom_2.5Kb_merged_counts.tsv"),sep = "\t",header = T,row.names = 1)
+dim(df)
+df_new = df[rowSums(df) >100,]
+dim(df_new)
+bedfile="hg19_promoters_std.Chr.2.5kb.sorted.merged.bed"
+df_bed = read.table(paste0(path,bedfile),sep = "\t",col.names = c("chr","start","end"))
+dim(df_bed)
+df_bed = df_bed[as.logical(rowSums(df)>100),]
+df_bed_granges = create_granges_frombed3(df_bed)
+```
+REad design.matrix
+```{r}
+design = read.table(paste0(path,"atac_design_matrix.tsv"),sep = "\t",header = T,row.names = 1)
+design.matrix = as.data.frame(design[match(colnames(df_new),rownames(design)),])
+head(design.matrix)
+```
+
+DeSEQ2 call
+```{r}
+dds = DESeqDataSetFromMatrix(df_new, design.matrix,~1,rowRanges=df_bed_granges)
+dds = DESeq(dds)
+rld = varianceStabilizingTransformation(dds, blind=TRUE)
+```
+
+```{r}
+save(dds,file = "Robjects/atac_hg19promoter_dds.Robj")
+save(dds,file = "Robjects/atac_hg19promoter_rld.Robj")
+```
+
+Plot PCA
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld, ntop= 1000,intgroup=c("cellline","parentype"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+ggplot(data, aes(PC1, PC2,col=cellline, shape=parentype))+ theme_bw() +
+  theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) + geom_point(size=3)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_ATAC_PCA_top1KDEsites.pdf") )
+```
+
+
+
+
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld,intgroup=c("cellline","parentype"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+ggplot(data, aes(PC1, PC2,col=cellline, shape=parentype))+ theme_bw() +
+  theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+  xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) + geom_point(size=3)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_PCA_top500DEsites.pdf") )
+```
+
+
+
+plot PCATEXT 1K
+```{r}
+showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld)$cellline))]
+data <- plotPCA(rld,  ntop = 1000,intgroup=c("cellline","parentype"), returnData=TRUE)
+percentVar <- round(100 * attr(data, "percentVar"))
+#pdf(file =  paste0("plots/",outputname,"_RNA_PCA.pdf"))
+ggplot(data, aes(PC1, PC2, col=cellline,label=rownames(colData(rld))))+ theme_bw() + 
+  theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) +
+    xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance")) +
+  geom_text(size=1.5,check_overlap = FALSE,show.legend = F)+
+  scale_color_manual(values = showcols) + 
+  theme(axis.title.x = element_text(face="bold",size=12)) + 
+  theme(axis.title.y = element_text(face="bold",size=12)) 
+ggsave(filename =paste0(outputname,"_PCA_text_1K.pdf"),dpi=300,width=8.5,height=8.5)
+```
