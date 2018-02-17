@@ -1,0 +1,173 @@
+---
+title: "Scatterplots: Highlight genes in CNV regions"
+output: html_notebook
+author: A.Thomas
+---
+Script to plots scatterplots of LFC values of all the genes that are overlapping
+CNV region
+
+Load the reqd packages 
+```{r}
+suppressPackageStartupMessages({
+library(biomaRt)
+library(ggplot2)
+library(RColorBrewer)
+library(GenomicRanges)
+})
+```
+
+```{r}
+#listMarts()
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl",
+                     GRCh=37)
+genes <- getBM(attributes=c('ensembl_gene_id','chromosome_name',
+                            'start_position','end_position','strand',
+                            'transcript_start'),  mart = ensembl)
+genes.uniq = genes[!duplicated(genes$ensembl_gene_id),]
+
+genes_gr = with(genes.uniq,
+               GRanges(seqnames = paste0("chr",chromosome_name),
+                    ranges = IRanges(start=start_position,
+                    end=end_position),strand=strand,id=ensembl_gene_id))
+
+```
+
+
+```{r}
+CNV_regions = data.frame("chr"=paste0("chr",c(9)),"start"=c(68476950),
+                         "end"=139904214)
+CNV_gr = makeGRangesFromDataFrame(CNV_regions)
+selected_genes_gr = subsetByOverlaps(genes_gr,CNV_gr)
+```
+
+
+Function to plot scatter plots
+
+```{r}
+scatterplot1 = function(df,outputname,xtitle,ytitle){
+g0 = subset(df,amplified=="FALSE")
+g1 = subset(df,amplified=="TRUE")
+ggplot(g0,aes(x=x,y=y,col=signficance)) + theme_bw() +
+        theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) + geom_point(size=1) +
+        xlab(paste0("LFC:",xtitle)) +  ylab(paste0("LFC:",ytitle)) +
+        scale_color_manual(values = c("#E41A1C","#BDBDBD")) +
+        geom_vline(xintercept=c(-1,1), linetype="dotted") + 
+        geom_hline(yintercept=c(-1,1), linetype="dotted") +
+        theme(axis.title.x = element_text(face="bold",size=12)) +  
+        theme(axis.title.y = element_text(face="bold",size=12)) +
+        xlim(-12,12)+ylim(-12,12) +
+        geom_point(data=g1,color="purple",size=1)
+ggsave(filename =paste0("plots/",outputname,"_allscatter1.pdf"),
+         width=8.5,height=8.5,dpi=600)
+}
+```
+
+
+```{r}
+plotscatter = function(filex, filey, namex, namey, status="all",cutoff=0.2){
+outputname=paste0(namex,"_",namey,"_CNV")
+set1 = read.table(filey,header = TRUE,sep="\t")
+set2 = read.table(filex,header = TRUE,sep = "\t")
+set1 = set1[!is.na(set1$padj),]
+set2 = set2[!is.na(set2$padj),]
+if(status != "all"){
+  set1 = set1[set1$padj< as.numeric(cutoff),]
+  set2 = set2[set2$padj< as.numeric(cutoff),]
+}
+genesy_amplified = factor(set1[set1$padj <=0.05 & set1$ensembl_gene_id %in% 
+                  elementMetadata(selected_genes_gr)$id,]$ensembl_gene_id)
+genesx_amplified = factor(set2[set2$padj <=0.05 & set2$ensembl_gene_id %in%
+                  elementMetadata(selected_genes_gr)$id,]$ensembl_gene_id)
+genes_amplified = unique(c(as.character(genesy_amplified),
+                           as.character(genesx_amplified)))
+
+nrow(set1)
+nrow(set2)
+set1 = set1[set1$ensembl_gene_id %in% set2$ensembl_gene_id,]
+set2 = set2[set2$ensembl_gene_id %in% set1$ensembl_gene_id,]
+set1 = set1[order(set1$ensembl_gene_id),]
+set2 = set2[order(set2$ensembl_gene_id),]
+nrow(set1)
+nrow(set2)
+if(nrow(set1) != nrow(set2)){
+  stop("No of rows are not same exiting!")
+}
+
+df = data.frame(id=set1$ensembl_gene_id,genename=set1$gene_symbol,
+      y=set1$log2FoldChange,y_padj=set1$padj,x=set2$log2FoldChange,
+      x_padj=set2$padj)
+
+df$y = as.numeric(as.character(df$y))
+df$x = as.numeric(as.character(df$x))
+df$signficance = as.factor(ifelse(as.numeric(as.character(df$y_padj))<=0.05 &
+                            as.numeric(as.character(df$x_padj))<=0.05,
+                            bquote("FDR<=0.05"),bquote("FDR>0.05")))
+
+df$LFC_change = as.factor(ifelse((abs(as.numeric(as.character(df$y))) >= 1 &
+                                    abs(as.numeric(as.character(df$x))) >= 1)
+                                 ,bquote("fold>=2"),bquote("fold <2")))
+df$status = as.factor(paste(df$signficance,df$LFC_change))
+head(df)
+df$amplified = as.factor(df$id %in% genes_amplified)
+head(df)
+if(status != "all"){
+  write.table(df,file=paste0("outputfiles/",outputname,"_only",cutoff,
+                "_genes_fdr0.05.tsv"),sep="\t",row.names = F,quote = F)
+  scatterplot1(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.05"),
+               namex,namey)
+}else{
+  write.table(df,file=paste0("outputfiles/",outputname,
+                "_all_fdr0.05.tsv"),sep="\t",row.names = F,quote = F)
+  scatterplot1(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
+}
+
+
+df$signficance = as.factor(ifelse(as.numeric(as.character(df$y_padj))<=0.1 &
+                                    as.numeric(as.character(df$x_padj))<=0.1,
+                                  bquote("FDR<=0.1"),bquote("FDR>0.1")))
+df$LFC_change = as.factor(ifelse((abs(as.numeric(as.character(df$y))) >= 1 &
+                                    abs(as.numeric(as.character(df$x))) >= 1),
+                                 bquote("fold>=2"),bquote("fold <2")))
+df$status = as.factor(paste(df$signficance,df$LFC_change))
+head(df)
+if(status != "all"){
+  write.table(df,file=paste0("outputfiles/",outputname,"_only",cutoff,
+                "_genes_fdr0.1.tsv"),sep="\t",row.names = F,quote = F)
+  scatterplot1(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.1"),
+               namex,namey)
+}else{
+  write.table(df,file=paste0("outputfiles/",outputname,
+                "_all_fdr0.1.tsv"),sep="\t",row.names = F,quote = F)
+  scatterplot1(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
+}
+}
+```
+
+
+```{r}
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+            "4250brainmetsparent-vs-0768","50brai-vs-50parents")
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+            "4250brainmetsparent-vs-0768","50brai-vs-50parents","no",0.2)
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+            "4250brainmetsparent-vs-0768","50brai-vs-50parents","no",0.5)
+```
+
+Function calls 
+```{r}
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","all")
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","no",0.2)
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","no",0.5)
+```

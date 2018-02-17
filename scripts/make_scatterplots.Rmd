@@ -39,6 +39,7 @@ Function to plot scatter plot and highlight SEMA4D & SEMA3C genes
 scatterplot1 = function(df,outputname,xtitle,ytitle){
         g1 = subset(df,genename %in% c("SEMA4D"))
         g2 =  subset(df,genename %in% c("SEMA3C"))
+        df = subset(df,! genename  %in% c("SEMA4D,SEMA3C"))
         ggplot(df,aes(x=x,y=y,col=signficance)) + theme_bw() +
                 theme(panel.border= element_rect(colour = "black",size=0.5),
                 panel.grid.major = element_blank(),
@@ -67,6 +68,7 @@ scatterplot2 = function(df,outputname,xtitle,ytitle){
         g1 = subset(df,genename %in% c("SEMA4D"))
         g2 =  subset(df,genename %in% c("SEMA3C"))
         g3 = subset(df,genename %in% c("MYC"))
+        df = subset(df,!genename  %in% c("SEMA4D,SEMA3C"))
         ggplot(df,aes(x=x,y=y,col=signficance)) + theme_bw() +
           theme(panel.border= element_rect(colour = "black",size=0.5),
                 panel.grid.major = element_blank(),
