@@ -1,0 +1,217 @@
+---
+title: "Scatterplot of DE genes"
+output: html_notebook
+author: A.Thomas
+---
+Script to plots scatterplots of LFC values of all the genes for two DE analysis
+
+Load the reqd packages 
+```{r}
+suppressPackageStartupMessages({
+library(ggplot2)
+library(RColorBrewer)
+})
+```
+
+Function to plot scatter plots
+```{r}
+scatterplot = function(df,outputname,xtitle,ytitle){
+        ggplot(df,aes(x=x,y=y,col=signficance)) + theme_bw() +
+                theme(panel.border= element_rect(colour = "black",size=0.5),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank()) + geom_point(size=1) +
+                xlab(paste0("LFC:",xtitle)) +  ylab(paste0("LFC:",ytitle)) +
+                scale_color_manual(values = c("#E41A1C","#BDBDBD")) +
+                geom_vline(xintercept=c(-1,1), linetype="dotted") + 
+                geom_hline(yintercept=c(-1,1), linetype="dotted") +
+                theme(axis.title.x = element_text(face="bold",size=12)) +  
+                theme(axis.title.y = element_text(face="bold",size=12)) +
+                xlim(-12,12)+ylim(-12,12)
+        #c("#E41A1C","#377EB8","#BDBDBD","#BDBDBD")
+        ggsave(filename =paste0("plots/",outputname,"_allscatter.pdf"),
+               width=8.5,height=8.5,dpi=300)
+}
+```
+
+Function to plot scatter plot and highlight SEMA4D & SEMA3C genes
+```{r}
+scatterplot1 = function(df,outputname,xtitle,ytitle){
+        g1 = subset(df,genename %in% c("SEMA4D"))
+        g2 =  subset(df,genename %in% c("SEMA3C"))
+        ggplot(df,aes(x=x,y=y,col=signficance)) + theme_bw() +
+                theme(panel.border= element_rect(colour = "black",size=0.5),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank()) + geom_point(size=1) +
+                xlab(paste0("LFC:",xtitle)) +  ylab(paste0("LFC:",ytitle)) +
+                scale_color_manual(values = c("#E41A1C","#BDBDBD")) +
+                geom_vline(xintercept=c(-1,1), linetype="dotted") + 
+                geom_hline(yintercept=c(-1,1), linetype="dotted") +
+                theme(axis.title.x = element_text(face="bold",size=12)) +  
+                theme(axis.title.y = element_text(face="bold",size=12)) +
+                xlim(-12,12)+ylim(-12,12) +
+                geom_point(data=g1,color="magenta",size=2) +
+                geom_text(data=g1,label="SEMA4D") +
+                geom_point(data=g2,color="magenta",size=2) +
+                geom_text(data=g2,label="SEMA3C") 
+        ggsave(filename =paste0("plots/",outputname,"_allscatter1.pdf"),
+               width=8.5,height=8.5,dpi=300)
+}
+```
+
+
+Function to plot scatter plot and highlight SEMA4D, SEMA3C and MYC genes
+```{r}
+scatterplot2 = function(df,outputname,xtitle,ytitle){
+        g1 = subset(df,genename %in% c("SEMA4D"))
+        g2 =  subset(df,genename %in% c("SEMA3C"))
+        g3 = subset(df,genename %in% c("MYC"))
+        ggplot(df,aes(x=x,y=y,col=signficance)) + theme_bw() +
+          theme(panel.border= element_rect(colour = "black",size=0.5),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank()) + geom_point(size=1) +
+                xlab(paste0("LFC:",xtitle)) +  ylab(paste0("LFC:",ytitle)) +
+                scale_color_manual(values = c("#E41A1C","#BDBDBD")) +
+                geom_vline(xintercept=c(-1,1), linetype="dotted") + 
+                geom_hline(yintercept=c(-1,1), linetype="dotted") +
+                theme(axis.title.x = element_text(face="bold",size=12)) +  
+                theme(axis.title.y = element_text(face="bold",size=12)) +
+                xlim(-12,12)+ylim(-12,12) +
+                geom_point(data=g1,color="magenta",size=2) +
+                geom_text(data=g1,label="SEMA4D") +
+                geom_point(data=g2,color="magenta",size=2) +
+                geom_text(data=g2,label="SEMA3C") + 
+                geom_point(data=g3,color="magenta",size=2) + 
+                geom_text(data=g3,label="MYC")
+        ggsave(filename =paste0("plots/",outputname,"_allscatter2.pdf"),
+               width=8.5,height=8.5,dpi=300)
+}
+```
+
+Function takes two genes list, create a data.frame with common genes for
+plotting the scatterplots 
+```{r}
+plotscatter = function(filex,filey,outputname,namex,namey,
+                       status="all",cutoff=0.2){
+        set1 = read.table(filey,header = TRUE,sep="\t")
+        set2 = read.table(filex,header = TRUE,sep = "\t")
+        head(set1)
+        head(set2)
+        nrow(set1)
+        nrow(set2)
+        set1 = set1[!is.na(set1$padj),]
+        set2 = set2[!is.na(set2$padj),]
+        if(status != "all"){
+          set1 = set1[set1$padj< as.numeric(cutoff),]
+          set2 = set2[set2$padj< as.numeric(cutoff),]
+        }
+        nrow(set1)
+        nrow(set2)
+
+        set1 = set1[set1$ensembl_gene_id %in% set2$ensembl_gene_id,]
+        set2 = set2[set2$ensembl_gene_id %in% set1$ensembl_gene_id,]
+        set1 = set1[order(set1$ensembl_gene_id),]
+        set2 = set2[order(set2$ensembl_gene_id),]
+        head(set1)
+        head(set2)
+        nrow(set1)
+        nrow(set2)
+        if(nrow(set1) != nrow(set2)){
+          stop("No of rows are not same exiting!")
+        }
+
+        df = data.frame(id=set1$ensembl_gene_id,genename=set1$gene_symbol,
+                        y=set1$log2FoldChange,y_padj=set1$padj,
+                        x=set2$log2FoldChange,x_padj=set2$padj)
+        #head(df)
+        df$y = as.numeric(as.character(df$y))
+        df$x = as.numeric(as.character(df$x))
+        df$signficance = as.factor(ifelse(as.numeric(as.character(df$y_padj))
+                        <=0.05 & as.numeric(as.character(df$x_padj))<=0.05,
+                        bquote("FDR<=0.05"),bquote("FDR>0.05")))
+        head(df)
+        df$LFC_change = as.factor(ifelse((abs(as.numeric(as.character(df$y))) 
+                        >= 1 & abs(as.numeric(as.character(df$x))) >= 1),
+                        bquote("fold>=2"),bquote("fold <2")))
+        df$status = as.factor(paste(df$signficance,df$LFC_change))
+        head(df)
+        if(status != "all"){
+          write.table(df,file=paste0("outputfiles/",outputname,"_only",cutoff,
+                        "_genes_fdr0.05.tsv"),sep="\t",row.names = F,quote = F)
+          scatterplot(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.05"),
+                      namex,namey)
+          scatterplot1(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.05"),
+                       namex,namey)
+          scatterplot2(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.05"),
+                       namex,namey)
+        }else{
+          write.table(df,file=paste0("outputfiles/",outputname,
+                        "_all_fdr0.05.tsv"),sep="\t",row.names = F,quote = F)
+          scatterplot(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
+          scatterplot1(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
+          scatterplot2(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
+        }
+
+        df$signficance = as.factor(ifelse(as.numeric(as.character(df$y_padj))
+                        <=0.1 & as.numeric(as.character(df$x_padj))<=0.1,
+                        bquote("FDR<=0.1"),bquote("FDR>0.1")))
+        df$LFC_change = as.factor(ifelse((abs(as.numeric(as.character(df$y))) 
+                        >= 1 & abs(as.numeric(as.character(df$x))) >= 1),
+                        bquote("fold>=2"),bquote("fold <2")))
+        df$status = as.factor(paste(df$signficance,df$LFC_change))
+        head(df)
+        if(status != "all"){
+          write.table(df,file=paste0("outputfiles/",outputname,"_only",cutoff,
+                        "_genes_fdr0.1.tsv"),sep="\t",row.names = F,quote = F)
+          scatterplot(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.1"),
+                      namex,namey)
+          scatterplot1(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.1"),
+                       namex,namey)
+          scatterplot2(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.1"),
+                       namex,namey)
+        }else{
+          write.table(df,file=paste0("outputfiles/",outputname,
+                        "_all_fdr0.1.tsv"),sep="\t",row.names = F,quote = F)
+          scatterplot(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
+          scatterplot1(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
+          scatterplot2(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
+        }
+
+}
+```
+Function calls
+
+```{r}
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+                "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+                "4250brainmetsplusparentvs0768-vs-Brx50braivsparents",
+            "4250brainmetsplusparent-vs-0768","Brx50brai-vs-50parents","all")
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+            "4250brainmetsplusparentvs0768-vs-Brx50braivsparents",
+            "4250brainmetsplusparent-vs-0768","Brx50brai-vs-50parents",
+            "not",0.2)
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+            "4250brainmetsplusparentvs0768-vs-Brx50braivsparents",
+            "4250brainmetsplusparent-vs-0768","Brx50brai-vs-50parents",
+            "not",0.5)
+```
+
+Function calls 
+```{r}
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
+            "4250brainmetsparentvs0768-vs-42brainvsparents",
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","all")
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
+            "4250brainmetsparentvs0768-vs-42brainvsparents",
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","not",0.2)
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
+            "4250brainmetsparentvs0768-vs-42brainvsparents",
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","not",0.5)
+```
