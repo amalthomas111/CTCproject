@@ -66,6 +66,30 @@ ggsave(filename =paste0("plots/",outputname,"_allscatter1.pdf"),
 ```
 
 
+
+```{r}
+scatterplot2 = function(df,outputname,xtitle,ytitle){
+#g0 = subset(df,amplified_de=="FALSE")
+#g1 = subset(df,amplified_de=="TRUE")
+ggplot(df,aes(x=x,y=y,col=amplified_de)) + theme_bw() +
+        theme(panel.border= element_rect(colour = "black",size=0.5),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        panel.background = element_blank()) + geom_point(size=1) +
+        xlab(paste0("LFC:",xtitle)) +  ylab(paste0("LFC:",ytitle)) +
+        scale_color_manual(values = c("#BDBDBD","#E41A1C")) +
+        geom_vline(xintercept=c(-1,1), linetype="dotted") + 
+        geom_hline(yintercept=c(-1,1), linetype="dotted") +
+        theme(axis.title.x = element_text(face="bold",size=12)) +  
+        theme(axis.title.y = element_text(face="bold",size=12)) +
+        xlim(-12,12)+ylim(-12,12) 
+        #geom_point(data=g1,color="purple",size=1)
+ggsave(filename =paste0("plots/",outputname,"_highlightDEamplified.pdf"),
+         width=8.5,height=8.5,dpi=600)
+}
+```
+
+
 ```{r}
 plotscatter = function(filex, filey, namex, namey, status="all",cutoff=0.2){
 outputname=paste0(namex,"_",namey,"_CNV")
@@ -112,16 +136,20 @@ df$LFC_change = as.factor(ifelse((abs(as.numeric(as.character(df$y))) >= 1 &
 df$status = as.factor(paste(df$signficance,df$LFC_change))
 head(df)
 df$amplified = as.factor(df$id %in% genes_amplified)
+df$amplified_de = as.factor(df$amplified == TRUE & df$signficance=="FDR<=0.05")
 head(df)
 if(status != "all"){
   write.table(df,file=paste0("outputfiles/",outputname,"_only",cutoff,
                 "_genes_fdr0.05.tsv"),sep="\t",row.names = F,quote = F)
   scatterplot1(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.05"),
                namex,namey)
+  scatterplot2(df,paste0(outputname,"_only",cutoff,
+                "_genes_fdr0.05.tsv"),namex,namey)
 }else{
   write.table(df,file=paste0("outputfiles/",outputname,
                 "_all_fdr0.05.tsv"),sep="\t",row.names = F,quote = F)
   scatterplot1(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
+  scatterplot2(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
 }
 
 
@@ -132,16 +160,20 @@ df$LFC_change = as.factor(ifelse((abs(as.numeric(as.character(df$y))) >= 1 &
                                     abs(as.numeric(as.character(df$x))) >= 1),
                                  bquote("fold>=2"),bquote("fold <2")))
 df$status = as.factor(paste(df$signficance,df$LFC_change))
+df$amplified_de = as.factor(df$amplified == TRUE & df$signficance=="FDR<=0.1")
 head(df)
 if(status != "all"){
   write.table(df,file=paste0("outputfiles/",outputname,"_only",cutoff,
                 "_genes_fdr0.1.tsv"),sep="\t",row.names = F,quote = F)
   scatterplot1(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.1"),
                namex,namey)
+  scatterplot2(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.1"),
+               namex,namey)
 }else{
   write.table(df,file=paste0("outputfiles/",outputname,
                 "_all_fdr0.1.tsv"),sep="\t",row.names = F,quote = F)
   scatterplot1(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
+  scatterplot2(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
 }
 }
 ```
