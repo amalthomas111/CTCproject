@@ -1,0 +1,1268 @@
+---
+title: "RNA-Seq DE analyis"
+output: html_notebook
+author: "A.Thomas"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r pressure, echo=FALSE}
+suppressPackageStartupMessages({
+  library(DESeq2)
+  library(dplyr)
+  library(pheatmap)
+  library(RColorBrewer)
+  library(gplots)
+  library(ggplot2)
+  library(KEGG.db)
+  library(goseq)
+  library(GO.db)
+  library(org.Hs.eg.db)
+  library(GenomicFeatures)
+  library(KEGGREST)
+  library(biomaRt)
+  library(data.table)
+  library(limma)
+  library(BiocParallel)
+  library(apeglm)
+})
+```
+
+```{r}
+register(MulticoreParam(4))
+```
+
+Function to plot barplot for pathway analysis
+```{r  , echo=FALSE}
+barplot = function(df, showCategory){
+  #df = df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
+  df = df[with(df, order( padj, decreasing = c(FALSE))),]
+  df = head(df, n=showCategory)
+  breaks = round( c(0, 1/4, 2/4, 3/4, 1) * max(df[['ratio']]) , 2)
+  p_plot = ggplot(df, aes_string(x="term", y="ratio", fill="padj")) + 
+    geom_col() + scale_y_continuous(expand=c(0, 0),
+    breaks=breaks, limits=c(0, max(df[["ratio"]]+0.05))) +
+    scale_x_discrete(name='term') + theme(text=ggplot2::element_text(size=9)) +
+    coord_flip() +  theme_bw(base_size=9) +
+    scale_color_gradient(low="blue", high="red") +
+    ylab("Ratio of DE genes in Category") +
+    xlab("KEGG pathway")
+  #scale_fill_continuous(low="#00dbde", high="#FFF94C") + 
+  return(p_plot)
+}
+```
+
+Function to plot dotplot for pathway analysis
+```{r, echo=FALSE}
+dotplot = function(df, showCategory=15){
+  #df = df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
+  df = df[with(df, order( padj, decreasing = c(FALSE))),]
+  df = head(df, n=showCategory)
+  d_plot = ggplot(df, aes_string(x="term", y="ratio",
+                                  colour="padj",size="numDEInCat")) + 
+    geom_point() + scale_color_gradient(low="blue", high="red")+ coord_flip() +
+    theme_bw(base_size=9) +
+    ylab("Ratio of DE genes in Category") +
+    xlab("KEGG pathway")
+  #scale_color_gradient(low="#00dbde",   high="#FFF94C") +
+  return(d_plot)
+}
+```
+
+Function to get genes in each pathway
+```{r}
+getkegggenes = function(id){
+  #cat(id)
+  query = keggGet(id)
+  geneid_details = query[[1]]$GENE
+  if(length(geneid_details) > 0){
+    details = geneid_details[c(FALSE,TRUE)]
+    genename = tstrsplit(details, ";")[[1]]
+  }else 
+    genename = NA
+  return(genename)
+}
+
+```
+
+Function to call Kegg pathway
+```{r, echo=FALSE}
+kegg = function(res,outputname,genome){
+  
+  path="data/"
+  load(paste0(path,"hg19.75.length.May13.2017.Robj"))
+  # or create length data from GTF using the following command
+  # gtf="Homo_sapiens.GRCh37.75.gtf"
+  # txdb = makeTxDbFromGFF(gtf)
+  # txsByGene = transcriptsBy(txdb, "gene")
+  # lengthData = median(width(txsByGene))
+  # names(lengthData) = gsub('\\.[0-9]+', '', names(lengthData))
+  # save(lengthData,file="hg19.75.length.May13.2017.RData")
+  # Kegg gene2cat and pathway data files can be created using
+  # create_keggdatafile.R script
+  load(paste0(path,"Kegg.gene2cat_2018-01-19.Robj"))
+  load(paste0(path,"Kegg.pathway.red_2018-01-19.Robj"))
+  
+  genome="hg19"
+  #resdat= res[complete.cases(res$padj),]
+  up = res[!is.na(res$log2FoldChange) & res$log2FoldChange > 0  &
+             !is.na(res$padj),]
+  down =  res[!is.na(res$log2FoldChange) & res$log2FoldChange < 0 &
+                !is.na(res$padj),]
+  
+  up.degenes=as.integer(up$padj<0.1)
+  names(up.degenes)=rownames(up)
+  down.degenes = as.integer(down$padj<0.1)
+  names(down.degenes) = rownames(down)
+  head(down.degenes)
+  
+    getPathwayName = function(x){
+    y = try(keggGet(x),TRUE)
+     #cat(x,"done")
+    if(class(y) == "try-error") return("")
+    return (as.character(unlist(strsplit(y[[1]]$NAME, '-'))[1]))
+    }
+    
+    ##########################################
+  if(sum(up.degenes==1) > 5){
+      up.degenes =up.degenes[match(unique(names(up.degenes)),
+                                    names(up.degenes))] 
+      table(up.degenes)
+      lengthData.up = lengthData[names(up.degenes)]
+      pwf.up   = nullp(up.degenes,genome="hg19",'ensGene',
+                       plot.fit=FALSE,bias.data = lengthData.up)
+      GO.wall.up = goseq(pwf.up,"hg19","ensGene",test.cats=c("GO:BP"))
+      GO.wall.up$padj = p.adjust(GO.wall.up$over_represented_pvalue,
+                                  method="BH")
+      GO.wall.up[["ratio"]] = GO.wall.up[["numDEInCat"]] / 
+        GO.wall.up[["numInCat"]]
+      GO.wall.up.filt = subset(GO.wall.up, GO.wall.up$padj<.05)
+      write.table(GO.wall.up,file=paste0("ontology/",outputname,"_GO_up.txt"),
+                  row.names=F,sep="\t",quote = F)
+      
+      if(nrow(GO.wall.up)>0){
+      head(GO.wall.up)
+      fig=barplot(GO.wall.up, 15)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_GO_UP.pdf"))
+      }
+      KEGG.up.custom = goseq(pwf.up, gene2cat=gene2cat)
+      KEGG.up.custom = KEGG.up.custom[complete.cases(KEGG.up.custom),]
+      KEGG.up.custom =
+        KEGG.up.custom[order(KEGG.up.custom$over_represented_pvalue),]
+      KEGG.up.custom = KEGG.up.custom[1:50,]
+      KEGG.up.custom$term = 
+        unlist(lapply(KEGG.up.custom$category, getPathwayName))
+      KEGG.up.custom[["ratio"]] = KEGG.up.custom[["numDEInCat"]] / 
+        KEGG.up.custom[["numInCat"]]
+      KEGG.up.custom$padj = p.adjust(KEGG.up.custom$over_represented_pvalue, 
+                                      method="BH")
+      KEGG.up.custom.sig = subset(KEGG.up.custom, KEGG.up.custom$padj<.05)
+      
+      pathwayid = tstrsplit(as.character(KEGG.up.custom$category),":")[[2]]
+      pathway.complete.genes = sapply(pathwayid,getkegggenes)
+      onlydegenes = symbols[symbols$ensembl_gene_id %in% 
+                              names(up.degenes[up.degenes==1]),]$gene_symbol
+      onlydegenes = factor(onlydegenes)
+      pathway.de.genes = sapply(pathway.complete.genes,
+                                function(x){x[x %in% onlydegenes]})
+      pathway.de.genes = unlist(lapply(pathway.de.genes, 
+                            function(x)paste(x,collapse = ",")),use.names = F)
+      KEGG.up.custom$DEgenes = pathway.de.genes
+      
+      write.table(as.data.frame(KEGG.up.custom),file=
+                    paste0("ontology/",outputname,"Kegg_UP_pathway.txt"),
+                  sep = "\t",quote = FALSE,row.names = FALSE)
+      if(nrow(KEGG.up.custom)>0){
+      fig=dotplot(KEGG.up.custom)
+      ggsave(plot = fig,filename=paste0("plots/",
+                                        outputname,"_Kegg_UP_pathway",".pdf"))
+      }
+  }
+    
+  if(sum(down.degenes==1) > 5){
+    
+    down.degenes = down.degenes[match(unique(names(down.degenes)),
+                                      names(down.degenes))]
+    table(down.degenes)
+    lengthData.down = lengthData[names(down.degenes)]
+    pwf.down = nullp(down.degenes,genome="hg19",'ensGene', 
+                     plot.fit=FALSE,bias.data = lengthData.down)
+    
+    GO.wall.down = goseq(pwf.down, "hg19","ensGene",test.cats=c("GO:BP"))
+    GO.wall.down$padj = p.adjust(GO.wall.down$over_represented_pvalue,
+                                  method="BH")
+    GO.wall.down[["ratio"]] = GO.wall.down[["numDEInCat"]] / 
+      GO.wall.down[["numInCat"]]
+    GO.wall.down.filt = subset(GO.wall.down, GO.wall.down$padj<.05)
+    write.table(GO.wall.down,file=paste0("ontology/",outputname,
+                                         "_GO_Down.txt"), row.names=F,sep="\t",
+                quote = F)
+    if(nrow(GO.wall.down)>0){
+    fig=barplot(GO.wall.down, showCategory = 15)
+    ggsave(plot = fig,filename=paste0("plots/",outputname,"_GO_down.pdf"))
+    }
+    
+    KEGG.down.custom = goseq(pwf.down, gene2cat = gene2cat)
+    KEGG.down.custom = KEGG.down.custom[complete.cases(KEGG.down.custom),]
+    KEGG.down.custom = 
+      KEGG.down.custom[order(KEGG.down.custom$over_represented_pvalue),]
+    KEGG.down.custom = KEGG.down.custom[1:50,]
+    KEGG.down.custom$term = unlist(lapply(KEGG.down.custom$category,
+                                           getPathwayName))
+    KEGG.down.custom[["ratio"]] = KEGG.down.custom[["numDEInCat"]] /
+      KEGG.down.custom[["numInCat"]]
+    KEGG.down.custom$padj = 
+      p.adjust(KEGG.down.custom$over_represented_pvalue, method="BH")
+    KEGG.down.custom.sig = subset(KEGG.down.custom, KEGG.down.custom$padj<.05)
+    
+    pathwayid = tstrsplit(as.character(KEGG.down.custom$category),":")[[2]]
+    pathway.complete.genes = sapply(pathwayid,getkegggenes)
+    onlydegenes = symbols[symbols$ensembl_gene_id %in% 
+                            names(down.degenes[down.degenes==1]),]$gene_symbol
+    onlydegenes = factor(onlydegenes)
+    pathway.de.genes = sapply(pathway.complete.genes,
+                              function(x){x[x %in% onlydegenes]})
+    pathway.de.genes = unlist(lapply(pathway.de.genes,
+                                     function(x)paste(x,collapse = ",")),
+                              use.names = F)
+    KEGG.down.custom$DEgenes = pathway.de.genes
+    
+    write.table(as.data.frame(KEGG.down.custom),file=
+                  paste0("ontology/",outputname,"Kegg_DOWN_pathway.txt"),
+                sep = "\t",quote = FALSE,row.names = FALSE)
+    if(nrow(KEGG.down.custom)>0){
+    fig=dotplot(KEGG.down.custom)
+    ggsave(plot = fig,filename=paste0("plots/",outputname,
+                                      "_Kegg_Down_pathway",".pdf"))
+    }
+  }
+}
+```
+
+Write output to files
+```{r, echo=FALSE}
+createoutput = function(res,outputname){
+
+    res = as.data.frame(res) 
+    res$ensembl_gene_id = rownames(res)
+    res = merge(res, symbols, by="ensembl_gene_id")
+    res = res %>% arrange(log2FoldChange) %>% arrange(padj)
+   
+    res = res[, c("ensembl_gene_id", "gene_symbol", 
+                   #"gene_name", 
+                   #"baseMean",
+                   "log2FoldChange",
+                   #"lfcSE",
+                   #"stat",
+                   "pvalue",
+                   "padj"
+                   )]
+    # Filters out duplicatge genes
+    res = res[!duplicated(res$ensembl_gene_id),]
+    up = res[!is.na(res$log2FoldChange) & res$log2FoldChange > 0 & 
+               !is.na(res$ensembl_gene_id),]
+    down =  res[!is.na(res$log2FoldChange) & res$log2FoldChange < 0 & 
+                  !is.na(res$ensembl_gene_id),]
+    
+    write.table(res, file = paste0("allDEgenes/",outputname,"_all.tsv"), 
+                sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(up, file = paste0("allDEgenes/",outputname,"_up.tsv"), 
+                sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(down,file =paste0("allDEgenes/",outputname,"_down.tsv"),
+                sep="\t",row.names = FALSE,quote = FALSE)     
+    
+    
+    filter_byfoldchange = function(res,pcutoff, foldcutoff,flag){
+      if(flag==1){
+        #upcase
+        genes = res[res$padj <= pcutoff & !is.na(res$padj) &
+                       res$log2FoldChange > foldcutoff,]
+        return(genes)
+      }
+        if(flag==0){
+        #down
+        genes = res[res$padj <= pcutoff & !is.na(res$padj) & 
+                       res$log2FoldChange <= foldcutoff,]
+        return(genes)
+      }
+    }
+
+    #res = res[complete.cases(res), ]
+    write.table(filter_byfoldchange(res,0.05,0,1), file = paste0("fdr0.05/",
+    outputname,"_up_fdr0.05.tsv"), sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,0,0),file =paste0("fdr0.05/",
+    outputname,"_down_fdr0.05.tsv"),sep="\t",row.names = FALSE,quote = FALSE) 
+    write.table(filter_byfoldchange(res,0.05,1,1), file = 
+    paste0("fdr0.05/fold2/",outputname,"_up_fold2fdr0.05.tsv"), sep = "\t", 
+    row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,-1,0),file =
+    paste0("fdr0.05/fold2/",outputname,"_down_fold2fdr0.05.tsv"),sep="\t",
+                row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,2,1), file = 
+    paste0("fdr0.05/fold4/",outputname,"_up_fold4fdr0.05.tsv"), sep = "\t",
+    row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,-2,0),file = 
+                  paste0("fdr0.05/fold4/",outputname,"_down_fold4fdr0.05.tsv"),
+                  sep="\t",row.names = FALSE,quote = FALSE)   
+    write.table(filter_byfoldchange(res,0.05,0.6,1), file = 
+                  paste0("fdr0.05/fold1.5/",outputname,
+                         "_up_fold1.5fdr0.05.tsv"), sep = "\t",
+                         row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,-0.6,0),file =
+                  paste0("fdr0.05/fold1.5/",outputname,
+                         "_down_fold1.5fdr0.05.tsv"),sep="\t",
+                        row.names = FALSE,quote = FALSE)
+    
+    write.table(filter_byfoldchange(res,0.1,0,1), file = 
+                  paste0("fdr0.1/",outputname,"_up_fdr0.1.tsv"), sep = "\t", 
+                row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,0,0),file =
+                  paste0("fdr0.1/",outputname,"_down_fdr0.1.tsv"),sep="\t",
+                row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,1,1), file = 
+                  paste0("fdr0.1/fold2/",outputname,"_up_fold2fdr0.1.tsv"),
+                sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,-1,0),file =
+                  paste0("fdr0.1/fold2/",outputname,"_down_fold2fdr0.1.tsv"),
+                sep="\t",row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,2,1), file = paste0("fdr0.1/fold4/",
+    outputname,"_up_fold4fdr0.1.tsv"), sep = "\t", row.names = FALSE,
+    quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,-2,0),file =paste0("fdr0.1/fold4/",
+    outputname,"_down_fold4fdr0.1.tsv"),sep="\t",row.names = FALSE,
+    quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,0.6,1), file = 
+                  paste0("fdr0.1/fold1.5/",outputname,"_up_fold1.5fdr0.05.tsv"),
+                sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,-0.6,0),file =
+                  paste0("fdr0.1/fold1.5/",outputname,
+                         "_down_fold1.5fdr0.05.tsv"),sep="\t",
+                row.names = FALSE,quote = FALSE)
+}
+
+```
+
+plotfigues
+```{r, echo=FALSE}
+plotfigures = function(rld1){
+
+      rlogcount = assay(rld1)    
+      sampleDists = as.matrix(dist(t(rlogcount)))
+      showcols = brewer.pal(8, "Set1")[1:
+                                    length(unique(colData(rld1)$targetorgan))]
+      a=data.frame(name=colData(rld1)$targetorgan)
+      hmcol = colorRampPalette(brewer.pal(9, "GnBu"))(100)
+      pdf(file = paste0("plots/MDS_PCA_Heatmap/",outputname,
+                        "_RNA_sampledist.pdf"))
+      heatmap.2(as.matrix(sampleDists), key=F, trace="none",
+                col=hmcol,
+                ColSideColors=showcols[factor(a$name)], 
+                RowSideColors=showcols[factor(a$name)],
+                margin=c(10, 10))
+      dev.off()
+      
+      data = plotPCA(rld1, intgroup="targetorgan", returnData=TRUE)
+      percentVar = round(100 * attr(data, "percentVar"))
+      #pdf(file =  paste0("plots/",outputname,"_RNA_PCA.pdf"))
+      ggplot(data, aes(PC1, PC2,label=rownames(colData(rld1))))+ theme_bw() +
+        theme(axis.line = element_line(colour = "black"),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              #panel.border = element_blank(),
+              panel.background = element_blank()) +
+        geom_text(col=showcols[factor(a$name)],size=2.5,check_overlap = FALSE)+
+        xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+        ylab(paste0("PC2: ",percentVar[2],"% variance"))
+      ggsave(filename =paste0("plots/MDS_PCA_Heatmap/",
+                              outputname,"_RNA_PCA.pdf") )
+      
+      sampleDistMatrix = as.matrix( sampleDists )
+      mdsData = data.frame(cmdscale(sampleDistMatrix))
+      mds = cbind(mdsData, as.data.frame(colData(rld1)))
+      ggplot(mds, aes(X1,X2,label=rownames(mds))) +
+      geom_text(col=showcols[factor(a$name)],size=2,check_overlap = FALSE) + 
+      theme(axis.line = element_line(colour = "black"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      panel.background = element_blank())+xlab("MDS Dim1")+ylab("MDS Dim2")
+      ggsave(filename = paste0("plots/MDS_PCA_Heatmap/",outputname,"_MDS.pdf"))
+}
+```
+
+
+create directories
+```{r, echo=FALSE}
+mainDir=getwd()
+subDir="fdr0.05"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.05/fold2"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1/fold2"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.05/fold4"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.05/fold1.5"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1/fold1.5"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1/fold4"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="allDEgenes"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="plots"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="plots/MDS_PCA_Heatmap"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="countdata"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="ontology"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="heatmap"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+```
+
+read gtf details
+```{r, echo=FALSE}
+path="data/"
+hg19_file=paste0(path,"hg19_withdetails.tsv")
+symbols = read.table(hg19_file,sep="\t",quote = "",row.names = NULL)
+colnames(symbols) = c("ensembl_gene_id", "gene_symbol", "gene_name")
+```
+
+Read counts table
+```{r, echo=FALSE}
+df = read.table(paste0(path,"RNAseq_rawcounts.tsv"),row.names = 1,
+                sep = "\t",header = T)
+dim(df)
+df = df[rowSums(df) > 10,]
+dim(df)
+```
+
+
+
+```{r}
+design.matrix = read.table(paste0(path,"RNAseq_design_matrix.tsv"),sep = "\t",
+                           header = T,row.names = 1)
+design.matrix
+```
+
+DESeq2 call
+```{r}
+dds  = DESeqDataSetFromMatrix(countData= df, colData= design.matrix,
+                      ~ culture + dissociation_treatment +  celllinetargetorgan)
+dds =  DESeq(dds)#, minReplicatesForReplace=Inf)
+# dds = estimateSizeFactors(dds)
+# dds = estimateDispersions(dds)
+# dds = nbinomWaldTest(dds, maxit=1000)
+rld =varianceStabilizingTransformation(dds,blind = TRUE)
+save(dds,file="deseqobject_default.Robj")
+save(rld,file="dseqRLDobject_default.Robj")
+```
+
+```{r}
+resultsNames(dds)
+```
+
+
+
+write normalized counts
+```{r}
+write.table(counts(dds, normalized=T) ,file = 
+      "RNAseq_DESEQ2_normalizedcounts.tsv",sep = "\t",quote = F,col.names = NA)
+write.table(assay(rld), paste0("heatmap/","countdata_defaultvst.tsv"),sep="\t",
+            row.names = TRUE,quote = FALSE,col.names = NA)
+save.image("RNASeq_differential_unique_dissociationtreatment.RData")
+#load("RNASeq_differential_unique_dissociationtreatment.RData")
+```
+
+```{r,echo=FALSE}
+rld1 = rld
+assay(rld1) = limma::removeBatchEffect(assay(rld1), batch = rld1$culture)
+assay(rld1) = limma::removeBatchEffect(assay(rld1), batch =
+                                          rld1$dissociation_treatment)
+assay(rld1) = limma::removeBatchEffect(assay(rld1), batch = rld1$cellline)
+write.table(assay(rld1), paste0("heatmap/",
+"countdata_defaultvst_removeculturedissociationcellline.tsv"),sep="\t",
+row.names = TRUE,quote = FALSE,col.names = NA)
+rld1 = rld
+assay(rld1) = limma::removeBatchEffect(assay(rld1), batch = rld1$culture)
+assay(rld1) = limma::removeBatchEffect(assay(rld1), batch = 
+                                          rld1$dissociation_treatment)
+#assay(rld1) = limma::removeBatchEffect(assay(rld1), batch = rld1$cellline)
+write.table(assay(rld1), paste0("heatmap/",
+"countdata_defaultvst_removeculturedissociation.tsv"),sep="\t",
+row.names = TRUE,quote = FALSE,col.names = NA)
+rld1 = rld
+assay(rld1) = limma::removeBatchEffect(assay(rld1), batch = 
+                                          rld1$dissociation_treatment)
+assay(rld1) = limma::removeBatchEffect(assay(rld1), batch = rld1$cellline)
+write.table(assay(rld1), paste0("heatmap/",
+"countdata_defaultvst_removedissociationcellline.tsv"),sep="\t",
+row.names = TRUE,quote = FALSE,col.names = NA)
+rld1 = rld
+assay(rld1) = limma::removeBatchEffect(assay(rld1), 
+                                    batch = rld1$dissociation_treatment)
+write.table(assay(rld1), paste0("heatmap/",
+"countdata_defaultvst_removedissociationeffect.tsv"),sep="\t",row.names = TRUE,
+quote = FALSE,col.names = NA)
+```
+
+
+
+For plotting the MA plot, it is better to plot with shrunken log fold change. We will use DESeq2 default LFC shrinkage with normal prior. Since we are using numerical vector for constrast for most of analysis,we need to run DESEQ function again with betaprior=True for lfcshrinkage to work
+https://support.bioconductor.org/p/106107/
+
+DESeq2 call with LFC shrinkage
+```{r}
+dds1  = DESeqDataSetFromMatrix(countData= df, colData= design.matrix,
+                    ~ culture + dissociation_treatment +  celllinetargetorgan)
+dds1 =  DESeq(dds1, betaPrior = TRUE)#, minReplicatesForReplace=Inf)
+save(dds1,file="deseqobject_withbetaprior.Robj")
+```
+
+Function to plot heatmap
+```{r,echo=F}
+plotheatmap = function(res,rldsub, number=10,outputname="test",covariate){
+  df_res = as.data.frame(res) 
+  df_res$ensembl_gene_id = rownames(df_res)
+  df_res = merge(df_res, symbols, by="ensembl_gene_id")
+  
+  df_res.up = df_res[ df_res$log2FoldChange >0,]
+  df_res.up = df_res.up %>% arrange(log2FoldChange) %>% arrange(padj)
+  up_names = head(df_res.up,n=number)$ensembl_gene_id
+  mat.up = assay(rldsub)[up_names,]
+  test = data.frame(symbols[match(up_names,symbols$ensembl_gene_id),])
+  setDT(test)[gene_symbol==" ",gene_symbol:=ensembl_gene_id]
+  rownames(mat.up)= test$gene_symbol
+  
+  df_res.down = df_res[df_res$log2FoldChange <0,]
+  df_res.down = df_res.down %>% arrange(log2FoldChange) %>% arrange(padj)
+  down_names = head(df_res.down,n=number)$ensembl_gene_id
+  mat.down = assay(rldsub)[down_names,]
+  test = data.frame(symbols[match(down_names,symbols$ensembl_gene_id),])
+  setDT(test)[gene_symbol==" ",gene_symbol:=ensembl_gene_id]
+  rownames(mat.down)= test$gene_symbol
+  mat = rbind(mat.up,mat.down)
+  
+  design.matrix$name = rownames(design.matrix)
+  test = design.matrix[order(design.matrix[covariate]),]
+  mat1 = mat[,test$name]
+  write.table(mat1,file = paste0("heatmap/heatmap_",outputname,".tsv"),
+              sep="\t",quote = F,row.names = T,col.names = NA)
+}
+```
+
+
+ 1.1 Brx07lung vs parent
+```{r}
+outputname = "Comparison1.1_Brx07lung-vs-07parents"
+res = results(dds, alpha=0.05, contrast =
+                c("celllinetargetorgan","Brx07lung","Brx07H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07lung")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx07lung", "Brx07H") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+ 1.2 Brx07lung vs parent
+```{r}
+outputname = "Comparison1.2_Brx07ovar-vs-07parents"
+res = results(dds, alpha=0.05, 
+              contrast = c("celllinetargetorgan","Brx07ovar","Brx07H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07ovar")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx07H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx07ovar", "Brx07H") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+ 2.1 Brx42brai vs parent
+```{r}
+outputname = "Comparison2.1_Brx42brai-vs-42parents"
+res = results(dds, alpha=0.05, 
+              contrast = c("celllinetargetorgan","Brx42brai","Brx42H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx42brai","Brx42H") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+```{r}
+resLFC = lfcShrink(dds,contrast = c("celllinetargetorgan","Brx42brai","Brx42H"))
+```
+
+
+
+```{r}
+topGene="ENSG00000075223"
+DESeq2::plotMA(resLFC, ylim=c(-10,10))
+with(res[topGene, ], {
+  points(baseMean, log2FoldChange, col="dodgerblue", cex=2, lwd=2)
+  text(baseMean, log2FoldChange, "SEMA3C", pos=2, col="dodgerblue")
+})
+```
+
+```{r}
+res = results(dds1, alpha=0.05, contrast = 
+                c("celllinetargetorgan","Brx42brai","Brx42H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+```
+
+```{r}
+topGene="ENSG00000075223"
+DESeq2::plotMA(res.sub, ylim=c(-10,10))
+with(res[topGene, ], {
+  points(baseMean, log2FoldChange, col="dodgerblue", cex=2, lwd=2)
+  text(baseMean, log2FoldChange, "SEMA3C", pos=2, col="dodgerblue")
+})
+```
+
+ 2.2 Brx42ovar vs parent
+```{r}
+outputname = "Comparison2.2_Brx42ovar-vs-42parents"
+res = results(dds, alpha=0.05, contrast = 
+                c("celllinetargetorgan","Brx42ovar","Brx42H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42ovar")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx42ovar","Brx42H") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+3.1 Brx50brai vs parent
+```{r}
+outputname = "Comparison3.1_Brx50brai-vs-50parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan",
+                                            "Brx50brai","Brx50H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx50brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx50brai","Brx50H") ]
+print(outputname)
+colData(rld.sub)
+ret = counts(dds, normalized=T)
+write.table(ret, paste0("countdata/",outputname,"countdata_norm.txt"),
+            sep="\t",row.names = TRUE,quote = FALSE,col.names = NA)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+
+```
+
+
+ 3.2 Brx50bone vs parent
+```{r}
+outputname = "Comparison3.2_Brx50bone-vs-50parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan",
+                                            "Brx50bone","Brx50H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx50bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx50bone","Brx50H") ]
+print(outputname)
+colData(rld.sub)
+ret = counts(dds, normalized=T) 
+write.table(ret, paste0("countdata/",outputname,"countdata_norm.txt"),
+            sep="\t",row.names = TRUE,quote = FALSE,col.names = NA)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+ 4.1 Brx68brai vs Brx68H
+```{r}
+outputname = "Comparison4.1_Brx68brai-vs-68parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan",
+                                            "Brx68brai","Brx68H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx68brai","Brx68H") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+
+ 4.2 Brx68bone vs Brx68H
+```{r}
+outputname = "Comparison4.2_Brx68bone-vs-68parents"
+res = results(dds, alpha=0.05, contrast =
+                c("celllinetargetorgan","Brx68bone","Brx68H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx68bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx68bone","Brx68H") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+
+4.3 Brx68lung vs Brx68H
+```{r}
+outputname = "Comparison4.3_Brx68lung-vs-68parents"
+res = results(dds, alpha=0.05, contrast =
+                c("celllinetargetorgan","Brx68lung","Brx68H"))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68lung")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$celllinetargetorgan %in% c("Brx68lung","Brx68H") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+```{r,echo=F}
+resultsNames(dds)
+```
+
+```{r,echo=FALSE}
+levels(design.matrix$celllinetargetorgan)
+```
+
+mets-vs-parents weights
+```{r}
+wt=data.frame(a=resultsNames(dds),
+      b=c(0,0,0,0,0,0.1,0.1,0.1,0.1,-0.25,0.1,0.1,0.1,-0.25,0.1,0.1,-0.25,0.1))
+wt
+sum(wt$b)
+```
+
+
+mets-vs-parents
+```{r}
+outputname = "ComparisonA.1.1_mets-vs-parent"
+res = results(dds, alpha=0.05, contrast = 
+        c(0,0,0,0,0,0.1,0.1,0.1,0.1,-0.25,0.1,0.1,0.1,-0.25,0.1,0.1,-0.25,0.1))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                          c("Brx50H","Brx68H","Brx07H","Brx42H")]) >= 10) >= 4
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+        c("Brx07lung","Brx07ovar","Brx07kidn","Brx42brai","Brx42ovar",
+ "Brx50brai","Brx50bone", "Brx68lung","Brx68bone","Brx68brai")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+ summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+ret = counts(dds, normalized=T)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+
+brain vs other mets weights
+```{r}
+wt=data.frame(a=resultsNames(dds),
+    b=c(0,0,0,0,0,-1/7,-1/7,-1/7,1/3,0,-1/7,-1/7,1/3,0,-1/7,1/3,0,-1/7))
+wt
+sum(wt$b)
+```
+
+
+
+```{r}
+outputname = "ComparisonI_brain-vs-othermets"
+res = results(dds, alpha=0.05, contrast =
+        c(0,0,0,0,0,-1/7,-1/7,-1/7,1/3,0,-1/7,-1/7,1/3,0,-1/7,1/3,0,-1/7))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                          c("Brx42brai","Brx50brai","Brx68brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+      c("Brx07lung","Brx07ovar","Brx07kidn","Brx42ovar","Brx50bone",
+        "Brx68lung","Brx68bone")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+For MA plot
+```{r}
+wt=data.frame(a=resultsNames(dds1),
+ b=c(0,0,0,0,0,0,0,0,-1/9,-1/9,-1/9,1/3,0,-1/9,-1/9,1/3,0,-1/9,1/3,0,-1/9))
+wt
+#sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonI_brain-vs-othermets"
+res1 = results(dds1, alpha=0.05, contrast =
+      c(0,0,0,0,0,0,0,0,-1/9,-1/9,-1/9,1/3,0,-1/9,-1/9,1/3,0,-1/9,1/3,0,-1/9))
+keep1 = rowSums(counts(dds1[,dds1$celllinetargetorgan %in%
+        c("Brx42brai","Brx50brai","Brx68brai","Brx42H","Brx50H")]) >= 10) >= 2
+keep2 = rowSums(counts(dds1[,dds1$celllinetargetorgan %in% 
+  c("Brx07lung","Brx07ovar","Brx07kidn","Brx68lung","Brx68bone")]) >= 10) >= 10
+res.sub1 = res1[keep1 & keep2,]
+```
+
+```{r}
+pdf(file = paste0(outputname,"_plotMA_",cutoff,"_LFCshrinkage.pdf"))
+topGene= c("ENSG00000136997","ENSG00000187764")
+DESeq2::plotMA(res.sub1, ylim=c(-10,10),alpha=cutoff)
+with(res.sub1[topGene, ], {
+  points(baseMean, log2FoldChange, col="dodgerblue", cex=0.75, lwd=1)
+  text(baseMean, log2FoldChange, c("MYC","SEMA4D"), pos=2, col="dodgerblue")
+})
+dev.off()
+```
+
+```{r}
+png(filename = paste0(outputname,"_plotMA_",cutoff,"_LFCshrinkage.png"))
+topGene= c("ENSG00000136997","ENSG00000187764")
+DESeq2::plotMA(res.sub1, ylim=c(-10,10),alpha=cutoff)
+with(res.sub1[topGene, ], {
+  points(baseMean, log2FoldChange, col="dodgerblue", cex=0.75, lwd=1)
+  text(baseMean, log2FoldChange, c("MYC","SEMA4D"), pos=2, col="dodgerblue")
+})
+dev.off()
+```
+
+
+brain vs other mets no 50bone weights
+```{r}
+wt=data.frame(a=resultsNames(dds),
+        b=c(0,0,0,0,0,-1/6,-1/6,-1/6,1/3,0,-1/6,0,1/3,0,-1/6,1/3,0,-1/6))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonI.1_brain-vs-othermetsno50bone"
+res = results(dds, alpha=0.05, contrast = 
+            c(0,0,0,0,0,-1/6,-1/6,-1/6,1/3,0,-1/6,0,1/3,0,-1/6,1/3,0,-1/6))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx42brai","Brx50brai","Brx68brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07lung","Brx07ovar","Brx07kidn","Brx42ovar", 
+                               "Brx68lung","Brx68bone")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+```{r,echo=FALSE}
+levels(design.matrix$celllinetargetorgan)
+```
+
+lung vs other mets weights
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/8,1/2,-1/8,-1/8,0,-1/8,
+                                      -1/8,-1/8,0,-1/8,-1/8,0,1/2))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonII_lung-vs-othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/8,1/2,-1/8,-1/8,0,-1/8,
+                                            -1/8,-1/8,0,-1/8,-1/8,0,1/2))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx07lung","Brx68lung")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42brai","Brx50brai","Brx68brai","Brx07ovar",
+                               "Brx07kidn","Brx42ovar","Brx50bone", "Brx68lung",
+                               "Brx68bone")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+
+bone vs other mets weights
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/8,-1/8,-1/8,-1/8,0,
+                                      -1/8,1/2,-1/8,0,1/2,-1/8,0,-1/8))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonIII_bone-vs-othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/8,-1/8,-1/8,-1/8,0,
+                                            -1/8,1/2,-1/8,0,1/2,-1/8,0,-1/8))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx50bone","Brx68bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07lung","Brx68lung","Brx42brai","Brx50brai",
+                               "Brx68brai","Brx07ovar","Brx07kidn","Brx42ovar",
+                               "Brx68lung")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+reateoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+```{r,echo=FALSE}
+resultsNames(dds)
+```
+
+ovary vs other mets weights
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/8,-1/8,1/2,-1/8,0,1/2,-1/8,
+                                      -1/8,0,-1/8,-1/8,0,-1/8))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonIV_ovary-vs-othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/8,-1/8,1/2,-1/8,0,1/2,
+                                            -1/8,-1/8,0,-1/8,-1/8,0,-1/8))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx07ovar","Brx42ovar")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx07lung","Brx68lung","Brx42brai","Brx50brai",
+                               "Brx68brai","Brx07kidn","Brx68lung","Brx50bone",
+                               "Brx68bone")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+```{r,echo=FALSE}
+resultsNames(dds)
+```
+
+ComparisonV_42b50brainmetsplusparent-vs-0768
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/6,-1/6,-1/6,1/4,1/4,0,0,1/4,
+                                      1/4,-1/6,0,-1/6,-1/6))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonV_42b50brainmetsplusparent-vs-0768"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/6,-1/6,-1/6,1/4,1/4,0,
+                                            0,1/4,1/4,-1/6,0,-1/6,-1/6))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx42brai",
+                      "Brx50brai","Brx68brai","Brx42H","Brx50H")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07lung",
+              "Brx07ovar","Brx07kidn","Brx68lung","Brx68bone")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+```{r}
+wt=data.frame(a=resultsNames(dds1),b=c(0,0,0,0,0,0,0,-1/7,-1/7,-1/7,-1/7,1/4,
+                                       1/4,0,0,1/4,1/4,-1/7,0,-1/7,-1/7))
+wt
+sum(wt$b)
+```
+
+```{r}
+res1 = results(dds1, alpha=0.05, contrast = c(0,0,0,0,0,0,0,-1/7,-1/7,-1/7,
+                                              -1/7,1/4,1/4,0,0,1/4,1/4,-1/7,
+                                              0,-1/7,-1/7))
+keep1 = rowSums(counts(dds1[,dds1$celllinetargetorgan %in% c("Brx42brai",
+                        "Brx50brai","Brx68brai","Brx42H","Brx50H")]) >= 10) >= 2
+keep2 = rowSums(counts(dds1[,dds1$celllinetargetorgan %in% 
+                              c("Brx07lung","Brx07ovar","Brx07kidn",
+                                "Brx68lung","Brx68bone")]) >= 10) >= 10
+res.sub1 = res1[keep1 & keep2,]
+```
+
+```{r}
+pdf(file = paste0(outputname,"_plotMA_",cutoff,"_LFCshrinkage.pdf"))
+topGene= c("ENSG00000136997","ENSG00000187764")
+DESeq2::plotMA(res.sub1, ylim=c(-10,10),alpha=cutoff)
+with(res.sub1[topGene, ], {
+  points(baseMean, log2FoldChange, col="dodgerblue", cex=0.75, lwd=1)
+  text(baseMean, log2FoldChange, c("MYC","SEMA4D"), pos=2, col="dodgerblue")
+})
+dev.off()
+```
+
+```{r}
+png(filename = paste0(outputname,"_plotMA_",cutoff,"_LFCshrinkage.png"))
+topGene= c("ENSG00000136997","ENSG00000187764")
+DESeq2::plotMA(res.sub1, ylim=c(-10,10),alpha=cutoff)
+with(res.sub1[topGene, ], {
+  points(baseMean, log2FoldChange, col="dodgerblue", cex=0.75, lwd=1)
+  text(baseMean, log2FoldChange, c("MYC","SEMA4D"), pos=2, col="dodgerblue")
+})
+dev.off()
+```
+
+
+ComparisonVI_42b50brainmets-vs-4250parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,1/2,-1/2,0,
+                                      0,1/2,-1/2,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonVI_42b50brainmets-vs-4250parents"
+res = results(dds, alpha=0.05, contrast =c(0,0,0,0,0,0,0,0,1/2,-1/2,0,
+                                           0,1/2,-1/2,0,0,0,0))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx42brai","Brx50brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42H","Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+ComparisonB_Brx07allmets-vs-07parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,1/3,1/3,1/3,0,0,0,0,0,0,0,0,0,0))
+wt
+#sum(wt$b)
+```
+
+
+
+ComparisonB_Brx07allmets-vs-07parents
+```{r}
+outputname = "ComparisonB_Brx07allmets-vs-07parents"
+res = results(dds, alpha=0.05, contrast = 
+                c(0,0,0,0,0,1/3,1/3,1/3,0,0,0,0,0,0,0,0,0,0))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                          c("Brx07kidn","Brx07lung","Brx07ovar")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+ComparisonC_Brx42allmets-vs-42parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,1/2,-1,1/2,0,0,0,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonC_Brx42allmets-vs-42parents"
+res = results(dds, alpha=0.05, contrast = 
+                c(0,0,0,0,0,0,0,0,1/2,-1,1/2,0,0,0,0,0,0,0))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42ovar","Brx42brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+ComparisonD_Brx50allmets-vs-50parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,0,0,0,0.5,0.5,-1,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonD_Brx50allmets-vs-50parents"
+res = results(dds, alpha=0.05, contrast =
+                c(0,0,0,0,0,0,0,0,0,0,0,0.5,0.5,-1,0,0,0,0))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx50brai","Brx50bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+ComparisonE_Brx68allmets-vs-68parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,0,0,
+                                      0,0,0,0,1/3,1/3,-1,1/3))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonE_Brx68allmets-vs-68parents"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0,0,0,
+                                            0,0,0,0,1/3,1/3,-1,1/3))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in%
+                             c("Brx68bone","Brx68brai","Brx68lung")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+ ComparisonF_Brx68boneplustparents-vs-68othermets
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,0,0,0,0,0,
+                                      0,1/2,-1/2,1/2,-1/2))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonF_Brx68boneplustparents-vs-68othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0,0,0,0,0,0,
+                                            0,1/2,-1/2,1/2,-1/2))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68bone","Brx68H")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68brai","Brx68lung")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+#plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
