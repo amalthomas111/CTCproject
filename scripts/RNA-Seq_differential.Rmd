@@ -878,6 +878,7 @@ res.sub1 = res1[keep1 & keep2,]
 ```
 
 ```{r}
+cutoff=0.01
 pdf(file = paste0(outputname,"_plotMA_",cutoff,"_LFCshrinkage.pdf"))
 topGene= c("ENSG00000136997","ENSG00000187764")
 DESeq2::plotMA(res.sub1, ylim=c(-10,10),alpha=cutoff)
@@ -987,7 +988,7 @@ summary(res.sub)
 rld.sub = rld
 print(outputname)
 colData(rld.sub)
-reateoutput(res.sub, outputname)
+createoutput(res.sub, outputname)
 plotfigures(rld.sub)
 kegg(res.sub, outputname,"hg19")
 plotheatmap(res.sub,rld1,20,outputname,"parenttype")

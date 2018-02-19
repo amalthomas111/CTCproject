@@ -23,7 +23,7 @@ if (length(args)==0)
 }
 
 if(!file.exists(paste0("plotFootprints_edit.R"))){
- stop("plotFootprints_edit.R not found")
+ stop("data/plotFootprints_edit.R not found")
 }
 suppressPackageStartupMessages({
 library(ATACseqQC)
@@ -33,7 +33,7 @@ library(motifStack)
 library(BiocParallel)
 library(GenomicAlignments)
 library(ChIPpeakAnno)
-source("plotFootprints_edit.R")
+source("data/plotFootprints_edit.R")
 })
 
 motif = args[1]

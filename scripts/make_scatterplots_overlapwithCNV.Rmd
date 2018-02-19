@@ -33,12 +33,19 @@ genes_gr = with(genes.uniq,
 ```
 
 
+
 ```{r}
 CNV_regions = data.frame("chr"=paste0("chr",c(9)),"start"=c(68476950),
                          "end"=139904214)
 CNV_gr = makeGRangesFromDataFrame(CNV_regions)
 selected_genes_gr = subsetByOverlaps(genes_gr,CNV_gr)
 ```
+
+```{r}
+save(selected_genes_gr,file = "Robjects/selected_genes_OverlapwithCNV.Robj")
+#load("Robjects/selected_genes_OverlapwithCNV.Robj")
+```
+
 
 
 Function to plot scatter plots
@@ -90,6 +97,36 @@ ggsave(filename =paste0("plots/",outputname,"_highlightDEamplified.pdf"),
 ```
 
 
+Function to plot scatter plot and highlight SEMA4D, SEMA3C and MYC genes
+```{r}
+scatterplot3 = function(df,outputname,xtitle,ytitle){
+        g0 = subset(df,genename %in% c("SEMA4D"))
+        g0_1 = subset(df,genename %in% c("MYC"))
+        df = subset(df,!genename  %in% c("SEMA4D","MYC"))
+        g1 = subset(df,amplified=="FALSE")
+        g2 = subset(df,amplified=="TRUE")
+        ggplot(g1,aes(x=x,y=y,col=signficance)) + theme_bw() +
+          theme(panel.border= element_rect(colour = "black",size=0.5),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank()) + geom_point(size=1) +
+                xlab(paste0("LFC:",xtitle)) +  ylab(paste0("LFC:",ytitle)) +
+                scale_color_manual(values = c("#E41A1C","#BDBDBD")) +
+                geom_vline(xintercept=c(-1,1), linetype="dotted") + 
+                geom_hline(yintercept=c(-1,1), linetype="dotted") +
+                theme(axis.title.x = element_text(face="bold",size=12)) +  
+                theme(axis.title.y = element_text(face="bold",size=12)) +
+                xlim(-12,12)+ylim(-12,12) +
+                geom_point(data=g2,color="purple",size=1) +
+                geom_point(data=g0,color="magenta",size=1) +
+                geom_text(data=g0,label=c("SEMA4D"))+
+                geom_point(data=g0_1,color="magenta",size=1) +
+                geom_text(data=g0_1,label=c("MYC"))+
+        ggsave(filename =paste0("plots/",outputname,"_allscatter3.pdf"),
+               width=8.5,height=8.5,dpi=300)
+}
+```
+
 ```{r}
 plotscatter = function(filex, filey, namex, namey, status="all",cutoff=0.2){
 outputname=paste0(namex,"_",namey,"_CNV")
@@ -98,8 +135,11 @@ set2 = read.table(filex,header = TRUE,sep = "\t")
 set1 = set1[!is.na(set1$padj),]
 set2 = set2[!is.na(set2$padj),]
 if(status != "all"){
-  set1 = set1[set1$padj< as.numeric(cutoff),]
-  set2 = set2[set2$padj< as.numeric(cutoff),]
+ total_genes =
+   unique(c(as.vector(set1[set1$padj< as.numeric(cutoff),]$ensembl_gene_id),
+            as.vector(set2[set2$padj< as.numeric(cutoff),]$ensembl_gene_id)))
+  set1 = set1[set1$ensembl_gene_id %in% total_genes,]
+  set2 = set2[set2$ensembl_gene_id %in% total_genes,]
 }
 genesy_amplified = factor(set1[set1$padj <=0.05 & set1$ensembl_gene_id %in% 
                   elementMetadata(selected_genes_gr)$id,]$ensembl_gene_id)
@@ -145,11 +185,14 @@ if(status != "all"){
                namex,namey)
   scatterplot2(df,paste0(outputname,"_only",cutoff,
                 "_genes_fdr0.05.tsv"),namex,namey)
+  scatterplot3(df,paste0(outputname,"_only",cutoff,
+                "_genes_fdr0.05.tsv"),namex,namey)
 }else{
   write.table(df,file=paste0("outputfiles/",outputname,
                 "_all_fdr0.05.tsv"),sep="\t",row.names = F,quote = F)
   scatterplot1(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
   scatterplot2(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
+  scatterplot3(df,paste0(outputname,"_all_fdr0.05"),namex,namey)
 }
 
 
@@ -169,11 +212,14 @@ if(status != "all"){
                namex,namey)
   scatterplot2(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.1"),
                namex,namey)
+  scatterplot3(df,paste0(outputname,"_only",cutoff,"_genes_fdr0.1"),
+               namex,namey)
 }else{
   write.table(df,file=paste0("outputfiles/",outputname,
                 "_all_fdr0.1.tsv"),sep="\t",row.names = F,quote = F)
   scatterplot1(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
   scatterplot2(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
+  scatterplot3(df,paste0(outputname,"_all_fdr0.1"),namex,namey)
 }
 }
 ```
@@ -185,21 +231,28 @@ plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
             "4250brainmetsparent-vs-0768","50brai-vs-50parents")
 plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
             "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
-            "4250brainmetsparent-vs-0768","50brai-vs-50parents","no",0.2)
+            "4250brainmetsparent-vs-0768","50brai-vs-50parents","no",0.01)
 plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
             "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
-            "4250brainmetsparent-vs-0768","50brai-vs-50parents","no",0.5)
+            "4250brainmetsparent-vs-0768","50brai-vs-50parents","no",0.05)
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+            "4250brainmetsparent-vs-0768","50brai-vs-50parents","no",0.1)
 ```
+
 
 Function calls 
 ```{r}
 plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
             "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
-            "4250brainmetsparent-vs-0768","42brai-vs-42parents","all")
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents")
 plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
             "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
-            "4250brainmetsparent-vs-0768","42brai-vs-42parents","no",0.2)
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","no",0.01)
 plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
             "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
-            "4250brainmetsparent-vs-0768","42brai-vs-42parents","no",0.5)
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","no",0.05)
+plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
+            "data/Comparison2.1_Brx42brai-vs-42parents_all.tsv",
+            "4250brainmetsparent-vs-0768","42brai-vs-42parents","no",0.1)
 ```
