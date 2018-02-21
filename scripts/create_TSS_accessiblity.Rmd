@@ -1,0 +1,151 @@
+---
+title: "TSS metaplot"
+output: html_notebook
+author: "A. Thomas"
+---
+
+```{r}
+suppressPackageStartupMessages({
+library(EnrichedHeatmap) # for making heatmap
+library(rtracklayer)
+library(circlize)
+library(dplyr)
+library(biomaRt)
+library(ggplot2)
+})
+```
+
+```{r}
+ensembl = useEnsembl(biomart="ensembl", dataset="hsapiens_gene_ensembl",
+                     GRCh=37)
+genes = getBM(attributes=c('ensembl_gene_id','hgnc_symbol',
+                           'transcription_start_site',"strand",
+                           'chromosome_name','start_position','end_position'),
+              mart = ensembl)
+genes = genes[!duplicated(genes$ensembl_gene_id),]
+head(genes)
+```
+
+```{r}
+findmean = function(mat,outputname){
+  mean = data.frame(avg = colMeans(mat),
+                  CI_lower = apply(mat, 2, Hmisc::smean.cl.normal)[2,],
+                  CI_upper = apply(mat, 2, Hmisc::smean.cl.normal)[3,]) %>%
+  mutate(factor = outputname, pos = colnames(mat))
+return(mean)
+}
+
+```
+
+Load the bigwigs
+```{r}
+getmetaplot = function(file1,file2,name1,name2,target_gene){
+  if(file.exists(paste0(file1,".Robj"))){
+    cat("obj1 exists\n")
+    load(paste0(file1,".Robj"))
+    obj1 = obj
+  }else{
+    obj = import.bw(file1)
+    save(obj,file = paste0(file1,".Robj"))
+    obj1 = obj
+  }
+    
+  if(file.exists(paste0(file2,".Robj"))){
+    cat("obj2 exists\n")
+    load(paste0(file2,".Robj"))
+    obj2 = obj
+  }else{
+    obj = import.bw(file2)
+    save(obj,file = paste0(file2,".Robj"))
+    obj2 = obj
+  }
+  outputname = paste0(name1,"_",name2,"_",target_gene)
+  gene_details =  genes[genes$hgnc_symbol==target_gene,]
+  #gene_details
+  TSS = TSS = GRanges(seqnames=paste0("chr",gene_details$chr),
+                 ranges=IRanges(start=gene_details$transcription_start_site,
+                 end=gene_details$transcription_start_site),
+                 strand=gene_details$strand,id=gene_details$ensembl_gene_id,
+                 name=gene_details$hgnc_symbol)
+  TSS
+  
+  obj1_matrix = normalizeToMatrix(obj1,TSS, value_column = "score",
+                                  mean_mode="w0",
+                                  w=100, extend = 2500)
+  obj2_matrix = normalizeToMatrix(obj2,TSS, value_column = "score",
+                                  mean_mode="w0",
+                                  w=100, extend = 2500)
+  #obj1_q= data.frame(value=quantile(obj1_matrix , probs = c(0.005, 0.5,0.99)))
+  #obj2_q = data.frame(value=quantile(obj2_matrix , probs = c(0.005, 0.5,0.99)))
+  
+  combine = bind_rows(findmean(obj1_matrix,paste0(name1)),
+                      findmean(obj2_matrix,paste0(name2)))
+  combine$pos<- factor(combine$pos, levels= colnames(obj1_matrix))
+  
+  ggplot(combine, aes(x = pos,y = avg, group = factor)) +
+    geom_line(aes(color = factor)) + 
+    theme_bw(base_size = 14) +
+    theme(axis.ticks.x = element_blank()) +
+    scale_x_discrete(breaks = c("u1", "d1", "d25"),
+                     labels =c ("-2.5Kb", "TSS", "+2.5Kb")) +
+    xlab(NULL) + 
+    ylab("# Tn5 insertions") +
+    ggtitle(target_gene) + theme(plot.title = element_text(hjust = 0.5))
+  ggsave(file = paste0("metaplot_",outputname,".pdf"),dpi=300)
+}
+
+```
+
+plot for MYC, SEMA4D, GPX1, GCLC
+```{r}
+getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw",
+            "50brain","50parents","MYC")
+getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw",
+            "50brain","50parents","SEMA4D")
+getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw",
+            "50brain","50parents","GPX1")
+getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw",
+            "50brain","50parents","GCLC")
+```
+
+```{r}
+getmetaplot("data/bigwigs/brainmets.cuts.bw",
+            "data/bigwigs/nonbrainmets.cuts.bw","brainmets",
+            "nonbrainmets","MYC")
+```
+
+```{r}
+getmetaplot("data/bigwigs/brainmets.cuts.bw",
+            "data/bigwigs/nonbrainmets.cuts.bw","brainmets",
+            "nonbrainmets","SEMA4D")
+getmetaplot("data/bigwigs/brainmets.cuts.bw",
+            "data/bigwigs/nonbrainmets.cuts.bw","brainmets",
+            "nonbrainmets","GPX1")
+getmetaplot("data/bigwigs/brainmets.cuts.bw",
+            "data/bigwigs/nonbrainmets.cuts.bw","brainmets",
+            "nonbrainmets","GCLC")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

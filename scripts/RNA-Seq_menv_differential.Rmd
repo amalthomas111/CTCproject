@@ -1,0 +1,427 @@
+---
+title: "RNA-Seq DE analyis"
+output: html_notebook
+author: "A.Thomas"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r pressure, echo=FALSE}
+suppressPackageStartupMessages({
+  library(DESeq2)
+  library(dplyr)
+  library(pheatmap)
+  library(RColorBrewer)
+  library(gplots)
+  library(ggplot2)
+  library(KEGG.db)
+  library(goseq)
+  library(GO.db)
+  library(org.Hs.eg.db)
+  library(GenomicFeatures)
+  library(KEGGREST)
+  library(biomaRt)
+  library(data.table)
+  library(limma)
+  library(BiocParallel)
+})
+```
+
+```{r}
+register(MulticoreParam(4))
+```
+
+Function to plot barplot for pathway analysis
+```{r  , echo=FALSE}
+barplot = function(df, showCategory){
+  #df = df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
+  df = df[with(df, order( padj, decreasing = c(FALSE))),]
+  df = head(df, n=showCategory)
+  breaks = round( c(0, 1/4, 2/4, 3/4, 1) * max(df[['ratio']]) , 2)
+  p_plot = ggplot(df, aes_string(x="term", y="ratio", fill="padj")) + 
+    geom_col() + scale_y_continuous(expand=c(0, 0),
+    breaks=breaks, limits=c(0, max(df[["ratio"]]+0.05))) +
+    scale_x_discrete(name='term') + theme(text=ggplot2::element_text(size=9)) +
+    coord_flip() +  theme_bw(base_size=9) +
+    scale_color_gradient(low="blue", high="red") +
+    ylab("Ratio of DE genes in Category") +
+    xlab("KEGG pathway")
+  #scale_fill_continuous(low="#00dbde", high="#FFF94C") + 
+  return(p_plot)
+}
+```
+
+Function to plot dotplot for pathway analysis
+```{r, echo=FALSE}
+dotplot = function(df, showCategory=15){
+  #df = df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
+  df = df[with(df, order( padj, decreasing = c(FALSE))),]
+  df = head(df, n=showCategory)
+  d_plot = ggplot(df, aes_string(x="term", y="ratio",
+                                  colour="padj",size="numDEInCat")) + 
+    geom_point() + scale_color_gradient(low="blue", high="red")+ coord_flip() +
+    theme_bw(base_size=9) +
+    ylab("Ratio of DE genes in Category") +
+    xlab("KEGG pathway")
+  #scale_color_gradient(low="#00dbde",   high="#FFF94C") +
+  return(d_plot)
+}
+```
+
+Kegg pathway
+```{r, echo=FALSE}
+kegg = function(res,outputname,genome){
+  path="data/"
+  load(paste0(path,"mm10.length.Robj"))
+  # print("###Ontology####")
+  # gtf="mm10.gtf"
+  # txdb <- makeTxDbFromGFF(gtf)
+  # txsByGene <- transcriptsBy(txdb, "gene")
+  # lengthData <- median(width(txsByGene))
+  # names(lengthData) <- gsub('\\.[0-9]+', '', names(lengthData))
+
+  load(paste0(path,"mm10.Kegg.gene2cat_2018-01-19.Robj"))
+  load(paste0(path,"mm10.Kegg.pathway.red_2018-01-19.Robj"))
+
+  genome=genome
+  #resdat<- res[complete.cases(res$padj),]
+  up = res[!is.na(res$log2FoldChange) & res$log2FoldChange > 0  & !is.na(res$padj),]
+  down =  res[!is.na(res$log2FoldChange) & res$log2FoldChange < 0 & !is.na(res$padj),]
+  
+  up.degenes<-as.integer(up$padj<0.1)
+  names(up.degenes)<-rownames(up)
+  down.degenes = as.integer(down$padj<0.1)
+  names(down.degenes) = rownames(down)
+  head(down.degenes)
+  #lengthData.up <- lengthData[names(up.degenes)]
+  #lengthData.down <- lengthData[names(down.degenes)]
+  
+    getPathwayName <- function(x){
+    y <- try(keggGet(x),TRUE)
+     #cat(x,"done")
+    if(class(y) == "try-error") return("")
+    return (as.character(unlist(strsplit(y[[1]]$NAME, '-'))[1]))
+    }
+    
+    ##########################################
+  if(sum(up.degenes==1) > 5){
+      up.degenes <-up.degenes[match(unique(names(up.degenes)), names(up.degenes))] 
+      table(up.degenes)
+      lengthData.up <- lengthData[names(up.degenes)]
+      pwf.up   = nullp(up.degenes,genome=genome,'ensGene', plot.fit=FALSE,bias.data = lengthData.up)
+      GO.wall.up <- goseq(pwf.up,genome,"ensGene",test.cats=c("GO:BP"))
+      GO.wall.up$padj <- p.adjust(GO.wall.up$over_represented_pvalue, method="BH")
+      GO.wall.up[["ratio"]] <- GO.wall.up[["numDEInCat"]] / GO.wall.up[["numInCat"]]
+      GO.wall.up.filt <- subset(GO.wall.up, GO.wall.up$padj<.05)
+      write.table(GO.wall.up,file=paste0("ontology/",outputname,"_GO_up.txt"), row.names=F,sep="\t",quote = F)
+      
+      if(nrow(GO.wall.up)>0){
+      head(GO.wall.up)
+      fig=barplot(GO.wall.up, 15)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_GO_UP.pdf"))
+      }
+      KEGG.up.custom <- goseq(pwf.up, gene2cat=gene2cat)
+      KEGG.up.custom = KEGG.up.custom[complete.cases(KEGG.up.custom),]
+      KEGG.up.custom = KEGG.up.custom[order(KEGG.up.custom$over_represented_pvalue),]
+      KEGG.up.custom = KEGG.up.custom[1:50,]
+      KEGG.up.custom$term <- unlist(lapply(KEGG.up.custom$category, getPathwayName))
+      KEGG.up.custom[["ratio"]] <- KEGG.up.custom[["numDEInCat"]] / KEGG.up.custom[["numInCat"]]
+      KEGG.up.custom$padj <- p.adjust(KEGG.up.custom$over_represented_pvalue, method="BH")
+      KEGG.up.custom.sig <- subset(KEGG.up.custom, KEGG.up.custom$padj<.05)
+      write.table(as.data.frame(KEGG.up.custom),file=paste0("ontology/",outputname,"Kegg_UP_pathway.txt"),sep = "\t",quote = FALSE,row.names = FALSE)
+      
+      if(nrow(KEGG.up.custom)>0){
+      fig=dotplot(KEGG.up.custom)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_Kegg_UP_pathway",".pdf"))
+      }
+  }
+    
+  if(sum(down.degenes==1) > 5){
+    
+    down.degenes = down.degenes[match(unique(names(down.degenes)),names(down.degenes))]
+    table(down.degenes)
+    lengthData.down <- lengthData[names(down.degenes)]
+    pwf.down = nullp(down.degenes,genome=genome,'ensGene', plot.fit=FALSE,bias.data = lengthData.down)
+    
+    GO.wall.down <- goseq(pwf.down, genome,"ensGene",test.cats=c("GO:BP"))
+    GO.wall.down$padj <- p.adjust(GO.wall.down$over_represented_pvalue, method="BH")
+    GO.wall.down[["ratio"]] <- GO.wall.down[["numDEInCat"]] / GO.wall.down[["numInCat"]]
+    GO.wall.down.filt <- subset(GO.wall.down, GO.wall.down$padj<.05)
+    write.table(GO.wall.down,file=paste0("ontology/",outputname,"_GO_Down.txt"), row.names=F,sep="\t",quote = F)
+    if(nrow(GO.wall.down)>0){
+    fig=barplot(GO.wall.down, showCategory = 15)
+    ggsave(plot = fig,filename=paste0("plots/",outputname,"_GO_down.pdf"))
+    }
+    
+    KEGG.down.custom <- goseq(pwf.down, gene2cat = gene2cat)
+    KEGG.down.custom = KEGG.down.custom[complete.cases(KEGG.down.custom),]
+    KEGG.down.custom = KEGG.down.custom[order(KEGG.down.custom$over_represented_pvalue),]
+    KEGG.down.custom = KEGG.down.custom[1:50,]
+    KEGG.down.custom$term <- unlist(lapply(KEGG.down.custom$category, getPathwayName))
+    KEGG.down.custom[["ratio"]] <- KEGG.down.custom[["numDEInCat"]] / KEGG.down.custom[["numInCat"]]
+    KEGG.down.custom$padj <- p.adjust(KEGG.down.custom$over_represented_pvalue, method="BH")
+    KEGG.down.custom.sig <- subset(KEGG.down.custom, KEGG.down.custom$padj<.05)
+    write.table(as.data.frame(KEGG.down.custom),file=paste0("ontology/",outputname,"Kegg_DOWN_pathway.txt"),sep = "\t",quote = FALSE,row.names = FALSE)
+    if(nrow(KEGG.down.custom)>0){
+    fig=dotplot(KEGG.down.custom)
+    ggsave(plot = fig,filename=paste0("plots/",outputname,"_Kegg_Down_pathway",".pdf"))
+    }
+  }
+}
+```
+
+```{r}
+plotfigures = function(rld1,outputname){
+
+      rlogcount <- assay(rld1)    
+      sampleDists <- as.matrix(dist(t(rlogcount)))
+      showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld1)$tissuecellline))]
+      a=data.frame(name=colData(rld1)$tissuecellline)
+      hmcol <- colorRampPalette(brewer.pal(9, "GnBu"))(100)
+      pdf(file = paste0("plots/MDS_PCA_Heatmap/",outputname,"_RNA_sampledist.pdf"))
+      heatmap.2(as.matrix(sampleDists), key=F, trace="none",
+                col=hmcol,
+                ColSideColors=showcols[factor(a$name)], 
+                RowSideColors=showcols[factor(a$name)],
+                margin=c(10, 10))
+      dev.off()
+      
+      data <- plotPCA(rld1, intgroup="tissuecellline", returnData=TRUE)
+      percentVar <- round(100 * attr(data, "percentVar"))
+      #pdf(file =  paste0("plots/",outputname,"_RNA_PCA.pdf"))
+      ggplot(data, aes(PC1, PC2,label=rownames(colData(rld1))))+ theme_bw() +
+        theme(axis.line = element_line(colour = "black"),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              #panel.border = element_blank(),
+              panel.background = element_blank()) +
+        geom_text(col=showcols[factor(a$name)],size=2.5,check_overlap = FALSE)+
+        xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+        ylab(paste0("PC2: ",percentVar[2],"% variance"))
+      ggsave(filename =paste0("plots/MDS_PCA_Heatmap/",outputname,"_RNA_PCA.pdf") )
+      
+      sampleDistMatrix <- as.matrix( sampleDists )
+      mdsData <- data.frame(cmdscale(sampleDistMatrix))
+      mds <- cbind(mdsData, as.data.frame(colData(rld1)))
+      ggplot(mds, aes(X1,X2,label=rownames(mds))) +  geom_text(col=showcols[factor(a$name)],size=2,check_overlap = FALSE) + 
+        theme(axis.line = element_line(colour = "black"),
+              panel.grid.major = element_blank(),
+              panel.grid.minor = element_blank(),
+              panel.background = element_blank())+xlab("MDS Dim1")+ylab("MDS Dim2")
+      ggsave(filename = paste0("plots/MDS_PCA_Heatmap/",outputname,"_MDS.pdf"))
+}
+```
+
+```{r}
+createoutput = function(res,outputname){
+
+    res <- as.data.frame(res) 
+    res$ensembl_gene_id <- rownames(res)
+    res <- merge(res, symbols, by="ensembl_gene_id")
+    res <- res %>% arrange(log2FoldChange) %>% arrange(padj)
+   
+    res <- res[, c("ensembl_gene_id", "gene_symbol", 
+                   #"gene_name", 
+                   #"baseMean",
+                   "log2FoldChange",
+                   #"lfcSE",
+                   #"stat",
+                   "pvalue",
+                   "padj"
+                   )]
+    # Filters out duplicatge genes
+    res <- res[!duplicated(res$ensembl_gene_id),]
+    up = res[!is.na(res$log2FoldChange) & res$log2FoldChange > 0 & !is.na(res$ensembl_gene_id),]
+    down =  res[!is.na(res$log2FoldChange) & res$log2FoldChange < 0 & !is.na(res$ensembl_gene_id),]
+    
+    
+    write.table(up, file = paste0("allDEgenes/",outputname,"_up.tsv"), sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(down,file =paste0("allDEgenes/",outputname,"_down.tsv"),sep="\t",row.names = FALSE,quote = FALSE)     
+    
+    
+    filter_byfoldchange = function(res,pcutoff, foldcutoff,flag){
+      if(flag==1){
+        #upcase
+        genes <- res[res$padj <= pcutoff & !is.na(res$padj) & res$log2FoldChange > foldcutoff,]
+        return(genes)
+      }
+        if(flag==0){
+        #upcase
+        genes <- res[res$padj <= pcutoff & !is.na(res$padj) & res$log2FoldChange <= foldcutoff,]
+        return(genes)
+      }
+    }
+
+    #res <- res[complete.cases(res), ]
+    write.table(filter_byfoldchange(res,0.05,0,1), file = paste0("fdr0.05/",outputname,"_up_fdr0.05.tsv"), sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,0,0),file =paste0("fdr0.05/",outputname,"_down_fdr0.05.tsv"),sep="\t",row.names = FALSE,quote = FALSE) 
+    write.table(filter_byfoldchange(res,0.05,1,1), file = paste0("fdr0.05/fold2/",outputname,"_up_fold2fdr0.05.tsv"), sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,-1,0),file =paste0("fdr0.05/fold2/",outputname,"_down_fold2fdr0.05.tsv"),sep="\t",row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,0,1), file = paste0("fdr0.1/",outputname,"_up_fdr0.1.tsv"), sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,0,0),file =paste0("fdr0.1/",outputname,"_down_fdr0.1.tsv"),sep="\t",row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,1,1), file = paste0("fdr0.1/fold2/",outputname,"_up_fdr0.1.tsv"), sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,-1,0),file =paste0("fdr0.1/fold2/",outputname,"_down_fdr0.1.tsv"),sep="\t",row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,0.6,1), file = paste0("fdr0.05/fold1.5/",outputname,"_up_fold1.5fdr0.05.tsv"), sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.05,-0.6,0),file =paste0("fdr0.05/fold1.5/",outputname,"_down_fold1.5fdr0.05.tsv"),sep="\t",row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,0.6,1), file = paste0("fdr0.1/fold1.5/",outputname,"_up_fold1.5fdr0.05.tsv"), sep = "\t", row.names = FALSE,quote = FALSE)
+    write.table(filter_byfoldchange(res,0.1,-0.6,0),file =paste0("fdr0.1/fold1.5/",outputname,"_down_fold1.5fdr0.05.tsv"),sep="\t",row.names = FALSE,quote = FALSE)
+}
+
+```
+
+create directories
+```{r, echo=FALSE}
+mainDir=getwd()
+subDir="fdr0.05"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.05/fold2"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1/fold2"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.05/fold4"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.05/fold1.5"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1/fold1.5"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1/fold4"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="allDEgenes"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="plots"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="plots/MDS_PCA_Heatmap"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="countdata"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="ontology"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="heatmap"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+```
+
+read mm10ensembl gene ids
+```{r, echo=FALSE}
+mm10_file="data/mm10_gene_details.tsv"
+symbols = read.table(mm10_file,sep="\t",quote = "",row.names = NULL)
+colnames(symbols) <- c("ensembl_gene_id", "gene_symbol")
+```
+
+
+# read counts table
+```{r}
+path="data/"
+df = read.table(paste0(path,"RNAseqhg19mm10_menv_count.tsv"),sep="\t",row.names = 1,header = TRUE)
+paste0(nrow(df),"*",ncol(df))
+exclude = c("X07ovar.menv.27.2","X07ovar.menv.28.2","X42brai.menv.66.1","X42ovar.menv.73.1","X68bone.menv.26.1")
+length(exclude)
+df = df[,!colnames(df) %in% exclude]
+mouse.genes = rownames(df)[grep("^ENSMUSG", rownames(df))]
+dim(df)
+df = df[mouse.genes,]
+dim(df)
+df1 = df[rowSums(df) > 10,]
+dim(df)
+```
+
+read design matrix
+
+```{r}
+design.matrix = read.table("data/RNAseq_menv_design_matrix.tsv",
+                           sep = "\t",row.names = 1,header = T)
+design.matrix
+```
+relevel design matrix
+```{r}
+design.matrix$tissuecellline = relevel(design.matrix$tissuecellline,ref="kidnBrx68")
+design.matrix
+```
+
+ DESEQ2 call
+```{r}
+dds  = DESeqDataSetFromMatrix(countData= df1, colData= design.matrix, ~ tissuecellline)
+dds =  DESeq(dds)#, minReplicatesForReplace=Inf)
+# dds <- estimateSizeFactors(dds)
+# dds <- estimateDispersions(dds)
+# dds <- nbinomWaldTest(dds, maxit=1000)
+rld <-varianceStabilizingTransformation(dds,blind = TRUE)
+ret <- counts(dds, normalized=T) 
+write.table(ret,file = "data/menv_countdata_DESEQ2_norm.tsv",sep="\t",row.names = TRUE,quote = FALSE,col.names = NA)
+write.table(assay(rld),file = "data/menv_countdata_RLD_norm.tsv",sep="\t",row.names = TRUE,quote = FALSE,col.names = NA)
+```
+
+
+# bone menv vs bone control
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,1/3,1/3,1/3,-1,0,0,0,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+ bone mets vs bone control
+```{r}
+outputname = "1.1.bonemenv-vs-bonecontrols"
+res = results(dds, alpha=0.05, contrast = c(0,1/3,1/3,1/3,-1,0,0,0,0,0,0,0))
+keep1 = rowSums(counts(dds[,dds$tissuecellline %in% c("boneBrx07","boneBrx50","boneBrx68")]) >= 5) >= 2
+keep2 = rowSums(counts(dds[,dds$tissuecellline %in% c("bonecontrol")]) >= 5) >= 1
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$tissuecellline %in% c("boneBrx07","boneBrx50","boneBrx68","bonecontrol") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub,outputname)
+kegg(res.sub, outputname,"mm10")
+```
+
+lung menv vs lung control
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0.25,0.25,0.25,0.25,-1))
+wt
+sum(wt$b)
+```
+
+2.1 lung menv vs lung control
+```{r}
+outputname = "2.1.lungmenv-vs-lungcontrols"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0.25,0.25,0.25,0.25,-1))
+keep1 = rowSums(counts(dds[,dds$tissuecellline %in% c("lungBrx07","lungBrx42","lungBrx50","lungBrx68")]) >= 5) >= 2
+keep2 = rowSums(counts(dds[,dds$tissuecellline %in% c("lungcontrol")]) >= 5) >= 1
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$tissuecellline %in% c("lungBrx07","lungBrx42","lungBrx50","lungBrx68","lungcontrol") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub,outputname)
+kegg(res.sub, outputname,"mm10")
+```
+
+
+brai menv vs brai control
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,1,-1,0,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+3.1 brai menv vs brai control
+```{r}
+outputname = "3.1.brainmenv-vs-braincontrols"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,1,-1,0,0,0,0,0))
+keep1 = rowSums(counts(dds[,dds$tissuecellline %in% c("braiBrx50")]) >= 5) >= 2
+keep2 = rowSums(counts(dds[,dds$tissuecellline %in% c("braicontrol")]) >= 5) >= 1
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld[ , rld$tissuecellline %in% c("braiBrx50","braicontrol") ]
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub,outputname)
+kegg(res.sub, outputname,"mm10")
+```

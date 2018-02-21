@@ -28,6 +28,7 @@ suppressPackageStartupMessages({
   library(limma)
   library(BiocParallel)
   library(apeglm)
+  library(scales)
 })
 ```
 
@@ -1079,15 +1080,44 @@ res.sub1 = res1[keep1 & keep2,]
 ```
 
 ```{r}
-pdf(file = paste0(outputname,"_plotMA_",cutoff,"_LFCshrinkage.pdf"))
+#pdf(file = paste0(outputname,"_plotMA_",cutoff,"_LFCshrinkage.pdf"))
+cutoff = 0.01
 topGene= c("ENSG00000136997","ENSG00000187764")
 DESeq2::plotMA(res.sub1, ylim=c(-10,10),alpha=cutoff)
 with(res.sub1[topGene, ], {
   points(baseMean, log2FoldChange, col="dodgerblue", cex=0.75, lwd=1)
   text(baseMean, log2FoldChange, c("MYC","SEMA4D"), pos=2, col="dodgerblue")
 })
-dev.off()
+#dev.off()
 ```
+
+
+```{r}
+data = as.data.frame(res.sub1)
+load("selected_genes_OverlapwithCNV.Robj")
+data$cnv = factor(rownames(data) %in% elementMetadata(selected_genes_gr)$id)
+data$DE_CNV = factor(data$padj<0.01 & data$cnv == "TRUE")
+```
+
+```{r}
+
+ggplot(data = subset(data,DE_CNV=="FALSE"),aes(x=baseMean,y=log2FoldChange,color=DE_CNV)) + theme_bw() +
+          theme(panel.border= element_rect(colour = "black",size=0.5),
+                panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank()) + geom_point(size=0.7) +
+                ylab(paste0("LFC")) + ylim(c(-10,10))+
+                scale_x_continuous(paste0("mean of normalized counts"),
+                trans = log10_trans(),breaks = 10^(c(1:5))) +
+                geom_hline(yintercept = 0, linetype="dotted") +  scale_color_manual(values = c("antiquewhite4")) +
+                geom_point(data = subset(data,DE_CNV=="TRUE"),color="#E41A1C",size=0.7) +
+          geom_point(data = data[rownames(data)=="ENSG00000187764",],pch=21, fill=NA, size=4, colour="red", stroke=1)
+
+
+
+ggsave(filename = "MA_cnv_42b50brainmetsplusparent-vs-0768_front1.pdf",width=8.5,height=8.5,dpi=300)
+```
+
 
 ```{r}
 png(filename = paste0(outputname,"_plotMA_",cutoff,"_LFCshrinkage.png"))
