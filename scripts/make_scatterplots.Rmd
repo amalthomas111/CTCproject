@@ -65,10 +65,10 @@ scatterplot1 = function(df,outputname,xtitle,ytitle){
 Function to plot scatter plot and highlight SEMA4D, SEMA3C and MYC genes
 ```{r}
 scatterplot2 = function(df,outputname,xtitle,ytitle){
-        g1 = subset(df,genename %in% c("SEMA4D"))
-        g2 =  subset(df,genename %in% c("SEMA3C"))
+#        g1 = subset(df,genename %in% c("SEMA4D"))
+#        g2 =  subset(df,genename %in% c("SEMA3C"))
         g3 = subset(df,genename %in% c("MYC"))
-        df = subset(df,!genename  %in% c("SEMA4D,SEMA3C"))
+        df = subset(df,!genename  %in% c("MYC"))
         ggplot(df,aes(x=x,y=y,col=signficance)) + theme_bw() +
           theme(panel.border= element_rect(colour = "black",size=0.5),
                 panel.grid.major = element_blank(),
@@ -81,14 +81,14 @@ scatterplot2 = function(df,outputname,xtitle,ytitle){
                 theme(axis.title.x = element_text(face="bold",size=12)) +  
                 theme(axis.title.y = element_text(face="bold",size=12)) +
                 xlim(-12,12)+ylim(-12,12) +
-                geom_point(data=g1,color="magenta",size=2) +
-                geom_text(data=g1,label="SEMA4D") +
-                geom_point(data=g2,color="magenta",size=2) +
-                geom_text(data=g2,label="SEMA3C") + 
                 geom_point(data=g3,color="magenta",size=2) + 
                 geom_text(data=g3,label="MYC")
         ggsave(filename =paste0("plots/",outputname,"_allscatter2.pdf"),
                width=8.5,height=8.5,dpi=300)
+               # geom_point(data=g1,color="magenta",size=2) +
+              #  geom_text(data=g1,label="SEMA4D") +
+               # geom_point(data=g2,color="magenta",size=2) +
+              #  geom_text(data=g2,label="SEMA3C") + 
 }
 ```
 
@@ -202,6 +202,24 @@ plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
             "not",0.5)
 ```
 
+```{r}
+plotscatter("data/LFC_ComparisonV_42b50brainmetsplusparent-vs-0768_all.tsv",
+                "data/LFC_Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+                "LFC_4250brainmetsplusparentvs0768-vs-Brx50braivsparents",
+            "4250brainmetsplusparent-vs-0768","Brx50brai-vs-50parents","all")
+plotscatter("data/LFC_ComparisonV_42b50brainmetsplusparent-vs-0768_all.tsv",
+                "data/LFC_Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+                "LFC_4250brainmetsplusparentvs0768-vs-Brx50braivsparents",
+            "4250brainmetsplusparent-vs-0768","Brx50brai-vs-50parents",
+            "not",0.2)
+plotscatter("data/LFC_ComparisonV_42b50brainmetsplusparent-vs-0768_all.tsv",
+                "data/LFC_Comparison3.1_Brx50brai-vs-50parents_all.tsv",
+                "LFC_4250brainmetsplusparentvs0768-vs-Brx50braivsparents",
+            "4250brainmetsplusparent-vs-0768","Brx50brai-vs-50parents",
+            "not",0.5)
+```
+
+
 Function calls 
 ```{r}
 plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
@@ -217,3 +235,5 @@ plotscatter("data/ComparisonV_4250brainmetsplusparent-vs-0768_all.tsv",
             "4250brainmetsparentvs0768-vs-42brainvsparents",
             "4250brainmetsparent-vs-0768","42brai-vs-42parents","not",0.5)
 ```
+
+

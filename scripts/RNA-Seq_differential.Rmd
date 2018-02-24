@@ -466,6 +466,11 @@ save(rld,file="dseqRLDobject_default.Robj")
 ```
 
 ```{r}
+load("deseqobject_default.Robj")
+load("dseqRLDobject_default.Robj")
+```
+
+```{r}
 resultsNames(dds)
 ```
 
@@ -515,7 +520,7 @@ quote = FALSE,col.names = NA)
 
 
 
-For plotting the MA plot, it is better to plot with shrunken log fold change. We will use DESeq2 default LFC shrinkage with normal prior. Since we are using numerical vector for constrast for most of analysis,we need to run DESEQ function again with betaprior=True for lfcshrinkage to work
+For plotting the MA plot, it is better to plot with shrunken log fold change, since it will . We will use DESeq2 default LFC shrinkage with normal prior. Since we are using numerical vector for constrast for most of analysis,we need to run DESEQ function again with betaprior=True for lfcshrinkage to work
 https://support.bioconductor.org/p/106107/
 
 DESeq2 call with LFC shrinkage
@@ -524,6 +529,10 @@ dds1  = DESeqDataSetFromMatrix(countData= df, colData= design.matrix,
                     ~ culture + dissociation_treatment +  celllinetargetorgan)
 dds1 =  DESeq(dds1, betaPrior = TRUE)#, minReplicatesForReplace=Inf)
 save(dds1,file="deseqobject_withbetaprior.Robj")
+```
+
+```{r}
+load("deseqobject_withbetaprior.Robj")
 ```
 
 Function to plot heatmap
@@ -699,6 +708,20 @@ plotheatmap(res.sub,rld1,20,outputname,"parenttype")
 
 ```
 
+3.1 Brx50brai vs parent LFC
+```{r}
+outputname = "LFC_Comparison3.1_Brx50brai-vs-50parents"
+res = results(dds1, alpha=0.05, contrast = c("celllinetargetorgan",
+                                            "Brx50brai","Brx50H"))
+keep1 = rowSums(counts(dds1[,dds1$celllinetargetorgan %in% 
+                             c("Brx50brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds1[,dds1$celllinetargetorgan %in% 
+                             c("Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+
+createoutput(res.sub, outputname)
+
+```
 
  3.2 Brx50bone vs parent
 ```{r}
@@ -1068,6 +1091,7 @@ sum(wt$b)
 ```
 
 ```{r}
+outputname = "LFC_ComparisonV_42b50brainmetsplusparent-vs-0768"
 res1 = results(dds1, alpha=0.05, contrast = c(0,0,0,0,0,0,0,-1/7,-1/7,-1/7,
                                               -1/7,1/4,1/4,0,0,1/4,1/4,-1/7,
                                               0,-1/7,-1/7))
@@ -1077,6 +1101,7 @@ keep2 = rowSums(counts(dds1[,dds1$celllinetargetorgan %in%
                               c("Brx07lung","Brx07ovar","Brx07kidn",
                                 "Brx68lung","Brx68bone")]) >= 10) >= 10
 res.sub1 = res1[keep1 & keep2,]
+createoutput(res.sub1, outputname)
 ```
 
 ```{r}
@@ -1297,3 +1322,194 @@ kegg(res.sub, outputname,"hg19")
 #plotheatmap(res.sub,rld1,20,outputname,"parenttype")
 ```
 
+```{r}
+resultsNames(dds)
+```
+
+ ComparisonF_Brx68boneplustparents-vs-68othermets
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,1/2,-1/2,0,0,1/2,
+                                      -1/2,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonG_4250brainmetsvs4250parents"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0,1/2,-1/2,0,0,1/2,
+                                      -1/2,0,0,0,0))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42brai","Brx50brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42H","Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+#plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+
+```{r}
+resultsNames(dds)
+```
+
+
+brain vs bone
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,1/3,0,0,-1/2,1/3,0,-1/2,1/3,0,0))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonH_brain-vs-bone"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0,1/3,0,0,-1/2,1/3,0,-1/2,1/3,0,0))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42brai","Brx50brai","Brx68brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68bone","Brx50bone")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+#plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+brain vs lung
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,-1/2,0,1/3,0,0,0,1/3,0,0,1/3,0,-1/2))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonH_brain-vs-lung"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,-1/2,0,1/3,0,0,0,1/3,0,0,1/3,0,-1/2))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42brai","Brx50brai","Brx68brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68lung","Brx07lung")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+#plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+brain vs ovary
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,-1/2,1/3,0,-1/2,0,1/3,0,0,1/3,0,0))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonH_brain-vs-ovary"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,-1/2,1/3,0,-1/2,0,1/3,0,0,1/3,0,0))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx42brai","Brx50brai","Brx68brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07ovar","Brx42ovar")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+#plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+bone vs lung
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,-1/2,0,0,0,0,1/2,0,0,1/2,0,0,-1/2))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonH_bone-vs-lung"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,-1/2,0,0,0,0,1/2,0,0,1/2,0,0,-1/2))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68bone","Brx50bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68lung","Brx07lung")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+#plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+bone vs ovary
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,-1/2,0,0,-1/2,1/2,0,0,1/2,0,0,0))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonH_bone-vs-ovary"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,-1/2,0,0,-1/2,1/2,0,0,1/2,0,0,0))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68bone","Brx50bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07ovar","Brx42ovar")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+#plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+lung vs ovary
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,1/2,-1/2,0,0,-1/2,0,0,0,0,0,0,1/2))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonH_lung-vs-ovary"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,1/2,-1/2,0,0,-1/2,0,0,0,0,0,0,1/2))
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx68lung","Brx07lung")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% 
+                             c("Brx07ovar","Brx42ovar")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub, outputname)
+plotfigures(rld.sub)
+kegg(res.sub, outputname,"hg19")
+#plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
