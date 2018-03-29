@@ -1,5 +1,5 @@
 # CTCproject
-This repository contains custom scripts used to process the data, generate the results and figures for Klotz et al. The intermediate ouput files/scripts required to run the scripts can be downloaded from this [link](http://smithlab.usc.edu/lab/public/thomas/publication/Klotz_el_al/data.tar.gz),If you find any bugs please report to amalthom@usc.edu.
+This repository contains custom scripts used to process the data, generate the results and figures for Klotz et al. The intermediate output files/scripts required to run the scripts can be downloaded from this [link](http://smithlab.usc.edu/lab/public/thomas/publication/Klotz_el_al/data.tar.gz). If you find any bugs please report to amalthom@usc.edu.
 
 ### Copyright
 
