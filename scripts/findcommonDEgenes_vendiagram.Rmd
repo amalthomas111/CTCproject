@@ -1,0 +1,169 @@
+---
+title: "Find common DE genes"
+output: html_notebook
+author: "A.Thomas"
+---
+
+
+libraries
+```{r}
+suppressPackageStartupMessages({
+library(limma)
+library(VennDiagram)
+})
+```
+
+ gene (GTF) file details
+```{r, echo=FALSE}
+path="data/"
+#path=""
+hg19_file=paste0(path,"hg19_withdetails.tsv")
+symbols = read.table(hg19_file,sep="\t",quote = "",row.names = NULL)
+colnames(symbols) <- c("ensembl_gene_id", "gene_symbol", "gene_name")
+```
+
+
+
+```{r}
+mainDir=getwd()
+subDir="plots"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="outputfiles"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+```
+
+```{r}
+files  = Sys.glob('data/ComparisonH*.tsv')
+files
+```
+
+```{r}
+brainlist = files[grepl("up",files) & grepl("brain",files)]
+cat("brainlist\n",brainlist)
+bonelist = files[ (grepl("bone-vs-",files) & grepl("up",files)) | grepl("vs-bone_down",files)]
+cat("\nbonelist\n",bonelist)
+lunglist = files[ (grepl("lung-vs-",files) & grepl("up",files)) | grepl("vs-lung_down",files)]
+cat("\nlunglist\n",lunglist)
+ovarlist = files[ grepl("vs-ovary_down",files)]
+cat("\novarlist\n",ovarlist)
+```
+
+
+```{r}
+get_ensemble_id = function(obj){
+genes = c()
+for(i in obj){
+  df = read.table(i,sep="\t",header = TRUE)
+  genes = c(genes,as.vector(df$ensembl_gene_id))
+}
+return(unique(genes))
+}
+```
+
+```{r}
+df_list = list()
+df_list[["brain"]] = get_ensemble_id(brainlist)
+df_list[["bone"]] = get_ensemble_id(bonelist)
+df_list[["lung"]] = get_ensemble_id(lunglist)
+df_list[["ovary"]] = get_ensemble_id(ovarlist)
+df_unique = unique(unlist(df_list))
+
+length(df_unique)
+length(df_unique)
+```
+
+```{r}
+sapply(df_list,length)
+```
+
+```{r}
+overlap = as.data.frame(sapply(df_list,function(x) as.integer(df_unique %in% unlist(x))))
+head(overlap)
+```
+
+```{r}
+length(df_unique)
+nrow(overlap)
+```
+
+```{r}
+outputname = "de_distribution"
+distribution = vennCounts(as.data.frame(overlap))
+distribution
+write.table(distribution,file = paste0("outputfiles/",outputname,"_freq_summary.txt"),sep = "\t",quote = F,row.names = F)
+df1= data.frame(overlap)
+rownames(df1)= df_unique
+write.table(df1,file = paste0("outputfiles/",outputname,"_distribution.txt"),sep = "\t",quote = F)
+```
+
+```{r}
+pdf(file=paste0("plots/venn-",outputname,".pdf"))
+vennDiagram(as.data.frame(overlap))
+dev.off()
+```
+
+
+ function to write output
+```{r}
+writeoutput = function(df,outputname){
+  common = symbols[ symbols$ensembl_gene_id %in% df,]
+  common = common[order(common$gene_symbol),]
+  head(common)
+  write.table(common,paste0("outputfiles/",outputname),sep="\t",quote = F,row.names = F)
+}
+
+```
+
+ write common genes in all libraries
+```{r}
+commongenes = df_unique[rowSums(overlap) == ncol(overlap)]
+length(commongenes)
+writeoutput(commongenes,paste0("common_disso_genes_in_all_libraries_",outputname,".tsv"))
+```
+
+
+ write common genes in atleast two libraries
+```{r}
+commongenes = df_unique[rowSums(overlap) >= 2]
+length(commongenes)
+writeoutput(commongenes,paste0("common_DE_genes_in_atleasttwo_libraries_",outputname,".tsv"))
+```
+
+```{r}
+colnames(overlap)
+```
+
+ unique
+```{r}
+for( i in colnames(overlap)){
+  commongenes = df_unique[overlap[,i]==1 & rowSums(overlap) == 1]
+  print(i)
+  print(length(commongenes))
+  writeoutput(commongenes,paste0("Only_",i,".tsv"))
+}
+#commongenes = df_unique[overlap$`brain-vs-othermets`==1 & rowSums(overlap) == 1]
+#length(commongenes)
+
+```
+
+```{r}
+command=paste0("Rscript upset.R outputfiles/",outputname,"_distribution.txt ",outputname)
+system(command)
+system(paste0("mv ",outputname,".pdf plots/"))
+```
+
+
+
+```{r}
+d=overlap
+pdf(file = paste0("plots/",outputname,"_venn.pdf"))
+grid.newpage()
+draw.triple.venn(area1 = nrow(subset(d, d[,1] == 1)), area2 = nrow(subset(d, d[,2] == 
+    1)), area3 = nrow(subset(d, d[,3] == 1)), n12 = nrow(subset(d, d[,1] == 1 & 
+    d[,2] == 1)), n23 = nrow(subset(d, d[,2] == 1 & d[,3] == 1)), n13 = nrow(subset(d,d[,1] == 1 & d[,3] == 1)), n123 = nrow(subset(d, d[,1] == 1 & d[,2] == 1 & d[,3] == 
+    1)), category = c(colnames(d)[1], colnames(d)[2] , colnames(d)[3] ), lty = "blank", 
+    fill = c("skyblue", "pink1", "mediumorchid"),euler.d = T,scaled = T)
+dev.off()
+```
+
+

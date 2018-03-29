@@ -1,0 +1,191 @@
+---
+title: "Organ specific DE genes pathway analysis"
+output: html_notebook
+author: "A.Thomas"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r pressure, echo=FALSE}
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(RColorBrewer)
+  library(gplots)
+  library(ggplot2)
+  library(KEGG.db)
+  library(goseq)
+  library(GO.db)
+  library(org.Hs.eg.db)
+  library(GenomicFeatures)
+  library(KEGGREST)
+  library(data.table)
+})
+```
+
+
+```{r  , echo=FALSE}
+barplot <- function(df, showCategory=15){
+  #df <- df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
+  df <- df[with(df, order( padj, decreasing = c(FALSE))),]
+  df <- head(df, n=showCategory)
+  df = df[order(df$padj,decreasing = c(TRUE)),]
+  df = df %>% mutate(term = factor(term,term))
+  breaks <- round( c(0, 1/4, 2/4, 3/4, 1) * max(df[['ratio']]) , 2)
+  p_plot <- ggplot(df, aes_string(x="term", y="ratio", fill="padj")) + geom_col() +
+    scale_y_continuous(expand=c(0, 0), breaks=breaks, limits=c(0, max(df[["ratio"]]+0.05))) +
+    scale_x_discrete(name='term') + theme(text=ggplot2::element_text(size=9)) +
+    coord_flip() +  theme_bw(base_size=9) + scale_color_gradient(low="blue", high="red") +
+    ylab("Ratio of DE genes in Category") +
+    xlab("KEGG pathway")
+  #scale_fill_continuous(low="#00dbde", high="#FFF94C") + 
+  #p_plot
+  return(p_plot)
+}
+```
+
+
+```{r, echo=FALSE}
+dotplot <- function(df, showCategory=15){
+  #df <- df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
+  df <- df[with(df, order( padj, decreasing = c(FALSE))),]
+  df <- head(df, n=showCategory)
+  df = df[order(df$padj,decreasing = c(TRUE)),]
+  df = df %>% mutate(term = factor(term,term))
+  d_plot <- ggplot(df, aes_string(x="term", y="ratio", colour="over_represented_pvalue",size="numDEInCat")) + 
+    geom_point() + scale_color_gradient(low="blue", high="red")+ coord_flip() +
+    theme_bw(base_size=9) +
+    ylab("Ratio of DE genes in Category") +
+    xlab("KEGG pathway")
+  #scale_color_gradient(low="#00dbde",   high="#FFF94C") +
+  return(d_plot)
+}
+```
+
+
+```{r, echo=FALSE}
+mainDir=getwd()
+subDir="plots"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="ontology"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+```
+
+
+
+```{r}
+listfiles=list()
+listfiles[["brain"]]=c("data/brain_all_up.txt","data/Only_brain.tsv")
+listfiles[["bone"]]=c("data/bone_all_up.txt","data/Only_bone.tsv")
+listfiles[["lung"]]=c("data/lung_all_up.txt","data/Only_lung.tsv")
+listfiles[["ovary"]]=c("data/ovary_all_up.txt","data/Only_ovary.tsv")
+```
+
+
+```{r}
+listfiles
+names(listfiles)
+```
+
+
+read gtf details
+```{r, echo=FALSE}
+path="data/"
+hg19_file=paste0(path,"hg19_withdetails.tsv")
+symbols = read.table(hg19_file,sep="\t",quote = "",row.names = NULL)
+colnames(symbols) = c("ensembl_gene_id", "gene_symbol", "gene_name")
+```
+
+Function to get genes in each pathway
+```{r}
+getkegggenes = function(id){
+  #cat(id)
+  query = keggGet(id)
+  geneid_details = query[[1]]$GENE
+  if(length(geneid_details) > 0){
+    details = geneid_details[c(FALSE,TRUE)]
+    genename = tstrsplit(details, ";")[[1]]
+  }else 
+    genename = NA
+  return(genename)
+}
+
+```
+
+
+```{r}
+for(i in names(listfiles)){
+  outputname=paste0("only",i)
+  onlyfile = listfiles[i][[1]][2]
+  allupfile = listfiles[i][[1]][1]
+  cat("\n",outputname,"\t",onlyfile,"\t",allupfile,"\n")
+  
+  df1= read.table(file=onlyfile,sep = "\t",quote = "",header = T)
+  head(df1)
+  dim(df1)
+  allde=read.table(allupfile,header = F,col.names = c("ensembl_gene_id"))
+  head(allde)
+  dim(allde)
+  up.degenes<-as.integer(allde$ensembl_gene_id %in% df1$ensembl_gene_id)
+  names(up.degenes)<-allde$ensembl_gene_id
+  sum(up.degenes)
+  path="data/"
+  load(paste0(path,"hg19.75.length.May13.2017.Robj"))
+  load(paste0(path,"Kegg.gene2cat_2018-01-19.Robj"))
+  load(paste0(path,"Kegg.pathway.red_2018-01-19.Robj"))
+  genome="hg19"
+  getPathwayName <- function(x){
+  y <- try(keggGet(x),TRUE)
+   #cat(x,"done")
+  if(class(y) == "try-error") return("")
+  return (as.character(unlist(strsplit(y[[1]]$NAME, '-'))[1]))
+  }
+      up.degenes <-up.degenes[match(unique(names(up.degenes)), names(up.degenes))] 
+      table(up.degenes)
+      lengthData.up <- lengthData[names(up.degenes)]
+      pwf.up   = nullp(up.degenes,genome="hg19",'ensGene', plot.fit=FALSE,bias.data = lengthData.up)
+      GO.wall.up <- goseq(pwf.up,"hg19","ensGene",test.cats=c("GO:BP"))
+      GO.wall.up$padj <- p.adjust(GO.wall.up$over_represented_pvalue, method="BH")
+      GO.wall.up[["ratio"]] <- GO.wall.up[["numDEInCat"]] / GO.wall.up[["numInCat"]]
+      GO.wall.up.filt <- subset(GO.wall.up, GO.wall.up$padj<.05)
+      write.table(GO.wall.up,file=paste0("ontology/",outputname,"_GO_up.txt"), row.names=F,sep="\t",quote = F)
+      
+      if(nrow(GO.wall.up)>0){
+      head(GO.wall.up)
+      fig=barplot(GO.wall.up, 15)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_GO_UP.pdf"))
+      }
+      KEGG.up.custom <- goseq(pwf.up, gene2cat=gene2cat)
+      KEGG.up.custom = KEGG.up.custom[complete.cases(KEGG.up.custom),]
+      KEGG.up.custom = KEGG.up.custom[order(KEGG.up.custom$over_represented_pvalue),]
+      KEGG.up.custom$padj <- p.adjust(KEGG.up.custom$over_represented_pvalue, method="BH")
+      KEGG.up.custom = KEGG.up.custom[1:100,]
+      
+      KEGG.up.custom$term <- unlist(lapply(KEGG.up.custom$category, getPathwayName))
+      KEGG.up.custom[["ratio"]] <- KEGG.up.custom[["numDEInCat"]] / KEGG.up.custom[["numInCat"]]
+      KEGG.up.custom.sig <- subset(KEGG.up.custom, KEGG.up.custom$padj<.05)
+      pathwayid = tstrsplit(as.character(KEGG.up.custom$category),":")[[2]]
+      pathway.complete.genes = sapply(pathwayid,getkegggenes)
+      onlydegenes = symbols[symbols$ensembl_gene_id %in% 
+                              names(up.degenes[up.degenes==1]),]$gene_symbol
+      onlydegenes = factor(onlydegenes)
+      pathway.de.genes = sapply(pathway.complete.genes,
+                                function(x){x[x %in% onlydegenes]})
+      pathway.de.genes = unlist(lapply(pathway.de.genes, 
+                            function(x)paste(x,collapse = ",")),use.names = F)
+      KEGG.up.custom$DEgenes = pathway.de.genes
+      write.table(as.data.frame(KEGG.up.custom),file=paste0("ontology/",outputname,"_Kegg_UP_pathway.txt"),sep = "\t",quote = FALSE,row.names = FALSE)
+      
+      if(nrow(KEGG.up.custom)>0){
+      fig=dotplot(KEGG.up.custom)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_Kegg_UP_pathway",".pdf"))
+      }
+      cat("\n#####Done\n#####\n")
+  }
+```
+
+
+
+
