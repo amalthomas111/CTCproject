@@ -1,5 +1,5 @@
 # CTCproject
-This repository contains custom scripts used to process the data, generate the results and figures. If you find any bugs please report to amalthom@usc.edu
+This repository contains custom scripts used to process the data, generate the results and figures for Klotz et al. If you find any bugs please report to amalthom@usc.edu
 
 ### Copyright
 
