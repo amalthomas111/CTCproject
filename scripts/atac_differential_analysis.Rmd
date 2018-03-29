@@ -1,0 +1,894 @@
+---
+title: "atac differential"
+output: html_document
+author: "A. Thomas"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+suppressPackageStartupMessages({
+  library(DESeq2)
+  library(ggplot2)
+  library(pheatmap)
+  library(RColorBrewer)
+  library(gplots)
+  library(ggplot2)
+  library(KEGG.db)
+  library(GO.db)
+  library(goseq)
+  library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+  library(org.Hs.eg.db)
+  library(GenomeInfoDb)
+  library(ChIPseeker)
+  library(rGREAT)
+})
+```
+
+#granges from bed3
+```{r}
+create_granges_frombed3 = function(bed){
+  gr1 = read.table(bed,sep="\t",header = F)
+  head=c("chr","start","end")
+  names(gr1)=head
+  gr = GRanges(seqnames=gr1$chr,
+               ranges=IRanges(start=gr1$start+1,end=gr1$end),
+               strand=rep("*",nrow(gr1)))
+  return(gr)
+}
+
+```
+
+```{r}
+create_grangesnew_frombed3 = function(bed){
+  gr1 = bed
+  gr = GRanges(seqnames=gr1$seqnames,
+               ranges=IRanges(start=gr1$start+1,end=gr1$end),
+               strand=rep("*",nrow(gr1)))
+  return(gr)
+}
+
+```
+
+# barplot
+```{r}
+barplot <- function(df, showCategory=15){
+  #df <- df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
+  df <- df[with(df, order( padj, decreasing = c(FALSE))),]
+  df <- head(df, n=showCategory)
+  breaks <- round( c(0, 1/4, 2/4, 3/4, 1) * max(df[['ratio']]) , 2)
+  p_plot <- ggplot(df, aes_string(x="term", y="ratio", fill="padj")) + geom_col() +
+    scale_y_continuous(expand=c(0, 0), breaks=breaks, limits=c(0, max(df[["ratio"]]+0.05))) +
+    scale_x_discrete(name='term') + theme(text=ggplot2::element_text(size=9)) +
+    coord_flip() +  theme_bw(base_size=9) + scale_color_gradient(low="blue", high="red") +
+    ylab("Ratio of DE genes in Category") +
+    xlab("KEGG pathway")
+  #scale_fill_continuous(low="#00dbde", high="#FFF94C") + 
+  return(p_plot)
+}
+```
+
+# dotplot
+```{r}
+dotplot <- function(df, showCategory=15){
+  #df <- df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
+  df <- df[with(df, order( padj, decreasing = c(FALSE))),]
+  df <- head(df, n=showCategory)
+  d_plot <- ggplot(df, aes_string(x="term", y="ratio", colour="padj",size="numDEInCat")) + 
+    geom_point() + scale_color_gradient(low="blue", high="red")+ coord_flip() +
+    theme_bw(base_size=9) +
+    ylab("Ratio of DE genes in Category") +
+    xlab("KEGG pathway")
+  #scale_color_gradient(low="#00dbde",   high="#FFF94C") +
+  return(d_plot)
+}
+```
+
+# rGREAT analysis
+```{r}
+great = function(commonPeaks){
+  
+seqlevelsStyle(commonPeaks) <- "UCSC"
+great_Job <- submitGreatJob(commonPeaks, species = "hg19")
+availableCategories(great_Job)
+great_ResultTable_motifs = getEnrichmentTables(great_Job, category = "Regulatory Motifs",request_interval=350)
+d.motif = as.data.frame(great_ResultTable_motifs$`MSigDB Predicted Promoter Motifs`)
+d.motif.filt=d.motif[d.motif$Binom_Raw_PValue<1e-10,]
+if(nrow(d.motif.filt)>0){
+  data = cbind(d.motif.filt$ID,d.motif.filt$name,d.motif.filt$Binom_Raw_PValue)
+  colnames(data)=c("Id","name","Bin pvalue")
+  write.table(data,file = paste0("ontology/",outputname,"_MOTIF_Great.tsv"), row.names=F,sep="\t",quote = F)
+}
+#great_ResultTable_phentype = getEnrichmentTables(great_Job, category = "Phenotype Data and Human Disease")
+#great_go =getEnrichmentTables(great_Job, category = "GO")
+great_pathway =  getEnrichmentTables(great_Job, category = "Pathway Data")
+d=as.data.frame(great_pathway$`PANTHER Pathway`)
+d.filt=d[d$Binom_Raw_PValue<0.05,]
+if(nrow(d.filt)>0){
+  data = cbind(d.filt$ID,d.filt$name,d.filt$Binom_Raw_PValue)
+  colnames(data)=c("Id","name","Bin pvalue")
+  write.table(data,file = paste0("ontology/",outputname,"_PANTHER_Great.tsv"), row.names=F,sep="\t",quote = F)
+}
+}
+```
+
+# KEGG pathway
+```{r}
+kegg = function(bed1,bed2,genome,outputname){
+  
+  create_granges_frombed = function(bed){
+    #gr1 = read.table(bed,sep="\t",header = T)
+    gr1=bed
+    #head=c("chr","start","end")
+    #names(gr1)=head
+    gr = GRanges(seqnames=gr1$chr,
+                 ranges=IRanges(start=gr1$start+1,end=gr1$end),
+                 strand=rep("*",nrow(gr1)))
+    return(gr)
+  }
+  
+  gr1=create_granges_frombed(bed1)
+  gr2=create_granges_frombed(bed2)
+  
+  allPeaks <- c(gr1,gr2)
+  commonPeaks <- reduce(allPeaks)
+  Txdb<- TxDb.Hsapiens.UCSC.hg19.knownGene
+  hg19_genes<- genes(Txdb)
+  promoters= promoters(hg19_genes,upstream = 1000,downstream = 1000)
+  allGenes <- unique(unlist(keys(TxDb.Hsapiens.UCSC.hg19.knownGene, "GENEID")))
+  length(allGenes)
+  # print(paste0("up ",length(gr1)))
+  # print(paste0("down ",length(gr2)))
+  # print(paste0("combined ",length(commonPeaks)))
+  
+    xx <- as.list(KEGGPATHID2NAME)
+  temp <- cbind(names(xx),unlist(xx))
+  addKeggTogoseq <- function(JX,temp){
+    for(l in 1:nrow(JX)){
+      if(JX[l,1] %in% temp[,1]){
+        JX[l,"term"] <- temp[temp[,1] %in% JX[l,1],2]
+        JX[l,"ontology"] <- "KEGG"
+      }
+      
+    }
+    return(JX)
+  }
+  
+  if(length(gr1)){
+      peakAnno.up <- annotatePeak(gr1, tssRegion = c(-1000, 1000), TxDb = TxDb.Hsapiens.UCSC.hg19.knownGene,annoDb = "org.Hs.eg.db")
+      output=paste0("annotation/annotate_UP",outputname,".tsv")
+      write.table(as.data.frame(peakAnno.up),file = output,sep="\t",quote = F, row.names = F)
+      peakAnno_GR.up <- as.GRanges(peakAnno.up)
+      genesWithPeakInTSS.up <- unique(peakAnno_GR.up[peakAnno_GR.up$annotation == "Promoter",]$geneId)
+      genesWithPeakInTSS1.up = unique(promoters[promoters %over% gr1]$gene_id)
+      allGenesForGOseq.up <- as.integer(allGenes %in% genesWithPeakInTSS.up)
+      allGenesForGOseq1.up <- as.integer(allGenes %in% genesWithPeakInTSS1.up)
+      names(allGenesForGOseq.up) <- allGenes
+      names(allGenesForGOseq1.up) <- allGenes
+      pwf.up = nullp(allGenesForGOseq.up, "hg19", "knownGene", plot.fit = FALSE)
+      pwf1.up = nullp(allGenesForGOseq1.up, "hg19", "knownGene", plot.fit = FALSE)
+      go.mf.up<-goseq(pwf.up,genome="hg19","knownGene", test.cats = c("GO:BP","GO:MF"))#, method = "Hypergeometric")#"GO:BP","GO:MF",
+      go.mf1.up<-goseq(pwf1.up,genome="hg19","knownGene", test.cats = c("GO:BP","GO:MF"))
+      go.mf.up$padj = p.adjust(go.mf.up$over_represented_pvalue, method="BH")
+      go.mf.up$ratio <- go.mf.up$numDEInCat/ go.mf.up$numInCat
+      go.mf1.up$padj = p.adjust(go.mf1.up$over_represented_pvalue, method="BH")
+      go.mf1.up$ratio <- go.mf1.up$numDEInCat / go.mf1.up$numInCat
+      
+      if(nrow(go.mf.up)>0){
+      head(go.mf.up)
+      fig=barplot(go.mf.up, showCategory = 15)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_GO_UP.pdf"))
+      }
+      if(nrow(go.mf1.up)>0){
+      head(go.mf1.up)
+      fig=barplot(go.mf1.up, showCategory = 15)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_hg19prom_GO_UP.pdf"))
+      }
+      enriched.go.up = go.mf.up$category[p.adjust(go.mf.up$over_represented_pvalue,method="BH")<0.5]
+      restemp.mf.up = addKeggTogoseq(go.mf.up,temp)
+      restemp.mf1.up = addKeggTogoseq(go.mf1.up,temp)
+      go.up = goseq(pwf.up,genome="hg19","knownGene", test.cats = c("KEGG"))#,method = "Hypergeometric")
+      go1.up = goseq(pwf1.up,genome="hg19","knownGene", test.cats = c("KEGG"))#,method = "Hypergeometric")
+      restemp.up <-addKeggTogoseq(go.up,temp)
+      restemp1.up <-addKeggTogoseq(go1.up,temp)
+      restemp.up$padj = p.adjust(restemp.up$over_represented_pvalue, method="BH")
+      restemp.up$ratio = restemp.up$numDEInCat/restemp.up$numInCat
+      
+      restemp1.up$padj = p.adjust(restemp1.up$over_represented_pvalue, method="BH")
+      restemp1.up$ratio = restemp1.up$numDEInCat/restemp1.up$numInCat
+      
+      if(nrow(restemp.up)>0){
+      head(restemp.up)
+      fig=dotplot(restemp.up, showCategory = 15)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_kEGGPATHWAY_UP.pdf"))
+      }
+      if(nrow(restemp1.up)>0){
+      head(restemp1.up)
+      fig=dotplot(restemp1.up, showCategory = 15)
+      ggsave(plot = fig,filename=paste0("plots/",outputname,"_kEGGPATHWAY_hg19prom_UP.pdf"))
+      }
+      print("chipseeker")
+      print(head(restemp.up))
+      
+      print("hg19 annotation")
+      print(head(restemp1.up))
+      if(nrow(restemp.up)>0)
+      {
+      write.table(restemp.up,file=paste0("ontology/",outputname,"_UP_Kegg.tsv"), row.names=F,sep="\t",quote = F)
+      write.table(restemp1.up,file=paste0("ontology/",outputname,"_UP_hg19Prom_Kegg.tsv"), row.names=F,sep="\t",quote = F)
+      }
+      
+      if(nrow(restemp.mf.up)>0)
+      {
+      write.table(restemp.mf.up,file=paste0("ontology/",outputname,"_UP_GO_MF.tsv"), row.names=F,sep="\t",quote = F)
+      write.table(restemp.mf1.up,file=paste0("ontology/",outputname,"_UP_hg19Prom_GO_MF.tsv"), row.names=F,sep="\t",quote = F)
+      }
+  }
+  
+  if(length(gr2)){
+    peakAnno.down <- annotatePeak(gr2, tssRegion = c(-1000, 1000), TxDb = TxDb.Hsapiens.UCSC.hg19.knownGene,annoDb = "org.Hs.eg.db")
+    output=paste0("annotation/annotate_Down",outputname,".tsv")
+    write.table(as.data.frame(peakAnno.down),file = output,sep="\t",quote = F, row.names = F)
+    peakAnno_GR.down <- as.GRanges(peakAnno.down)
+    genesWithPeakInTSS.down <- unique(peakAnno_GR.down[peakAnno_GR.down$annotation == "Promoter",]$geneId)
+    genesWithPeakInTSS1.down = unique(promoters[promoters %over% gr2]$gene_id)
+    allGenesForGOseq.down <- as.integer(allGenes %in% genesWithPeakInTSS.down)
+    allGenesForGOseq1.down <- as.integer(allGenes %in% genesWithPeakInTSS1.down)
+    names(allGenesForGOseq.down) <- allGenes
+    names(allGenesForGOseq1.down) <- allGenes
+    pwf.down = nullp(allGenesForGOseq.down, "hg19", "knownGene", plot.fit = FALSE)
+    pwf1.down = nullp(allGenesForGOseq1.down, "hg19", "knownGene", plot.fit = FALSE)
+    go.mf.down<-goseq(pwf.down,genome="hg19","knownGene", test.cats = c("GO:BP","GO:MF"))#, method = "Hypergeometric")#"GO:BP","GO:MF",
+    go.mf1.down<-goseq(pwf1.down,genome="hg19","knownGene", test.cats = c("GO:BP","GO:MF"))
+    
+    go.mf.down$padj = p.adjust(go.mf.down$over_represented_pvalue, method="BH")
+    go.mf.down$ratio <- go.mf.down$numDEInCat / go.mf.down$numInCat
+    go.mf1.down$padj = p.adjust(go.mf1.down$over_represented_pvalue, method="BH")
+    go.mf1.down$ratio <- go.mf1.down$numDEInCat / go.mf1.down$numInCat
+    if(nrow(go.mf.down)>0){
+    head(go.mf.down)
+    fig=barplot(go.mf.down, showCategory = 15)
+    ggsave(plot = fig,filename=paste0("plots/",outputname,"_GO_DOWN.pdf"))
+    }
+    if(nrow(go.mf1.down)>0){
+    head(go.mf1.down)
+    fig=barplot(go.mf1.down, showCategory = 15)
+    ggsave(plot = fig,filename=paste0("plots/",outputname,"_hg19prom_GO_DOWN.pdf"))
+    } 
+    enriched.go.down = go.mf.down$category[p.adjust(go.mf.down$over_represented_pvalue,method="BH")<0.5]
+    restemp.mf.down = addKeggTogoseq(go.mf.down,temp)
+    restemp.mf1.down = addKeggTogoseq(go.mf1.down,temp)
+    go.down = goseq(pwf.down,genome="hg19","knownGene", test.cats = c("KEGG"))#,method = "Hypergeometric")
+    go1.down = goseq(pwf1.down,genome="hg19","knownGene", test.cats = c("KEGG"))#,method = "Hypergeometric")
+    
+    restemp.down <-addKeggTogoseq(go.down,temp)
+    restemp1.down <-addKeggTogoseq(go1.down,temp)
+    restemp.down$padj = p.adjust(restemp.down$over_represented_pvalue, method="BH")
+    restemp.down$ratio = restemp.down$numDEInCat/restemp.down$numInCat
+    
+    restemp1.down$padj = p.adjust(restemp1.down$over_represented_pvalue, method="BH")
+    restemp1.down$ratio = restemp1.down$numDEInCat/restemp1.down$numInCat
+    if(nrow(restemp.down)>0){
+    head(restemp.down)
+    fig=dotplot(restemp.down, showCategory = 15)
+    ggsave(plot = fig,filename=paste0("plots/",outputname,"_kEGGPATHWAY_DOWN.pdf"))
+    }
+    if(nrow(restemp1.down)>0){
+    head(restemp1.down)
+    fig=dotplot(restemp1.down, showCategory = 15)
+    ggsave(plot = fig,filename=paste0("plots/",outputname,"_kEGGPATHWAY_hg19prom_DOWN.pdf"))
+    }
+    print("chipseeker")
+    print(head(restemp.down))
+    print("hg19 annotation")
+    print(head(restemp1.down))
+    print(nrow(restemp.down))
+    if(nrow(restemp.down)>0)
+    {
+    write.table(restemp.down,file=paste0("ontology/",outputname,"_Down_Kegg.tsv"), row.names=F,sep="\t",quote = F)
+    write.table(restemp1.down,file=paste0("ontology/",outputname,"_Down_hg19Prom_Kegg.tsv"), row.names=F,sep="\t",quote = F)
+    }
+    
+    if(nrow(restemp.mf.down)>0)
+    {
+    write.table(restemp.mf.down,file=paste0("ontology/",outputname,"_Down_GO_MF.tsv"), row.names=F,sep="\t",quote = F)
+    write.table(restemp.mf1.down,file=paste0("ontology/",outputname,"_Down_hg19Prom_GO_MF.tsv"), row.names=F,sep="\t",quote = F)
+    }
+  }
+  
+  #Call Great Function
+  great(commonPeaks)
+}
+
+```
+
+#Write outputfiles
+```{r}
+
+createoutput = function(res, rld1, outputname){
+  
+  rlogcount <- assay(rld1)
+  sampleDists <- as.matrix(dist(t(rlogcount)))
+  showcols <- brewer.pal(8, "Set1")[1:length(unique(colData(rld1)$cellline))]
+  a=data.frame(name=colData(rld1)$cellline)
+  hmcol <- colorRampPalette(brewer.pal(9, "GnBu"))(100)
+  pdf(file = paste0("plots/MDS_PCA_Heatmap/",outputname,"_atac_sampledist.pdf"))
+  heatmap.2(as.matrix(sampleDists), key=F, trace="none",
+            col=hmcol,
+                ColSideColors=showcols[factor(a$name)], 
+                RowSideColors=showcols[factor(a$name)],
+            margin=c(10, 10))
+  dev.off()
+  test_cellline <- res
+  
+  #differential regions
+  up_fdr <- test_cellline[!is.na(test_cellline$padj) & test_cellline$padj <= 0.05  & test_cellline$log2FoldChange > 0]
+  down_fdr <- test_cellline[test_cellline$padj <= 0.05 & !is.na(test_cellline$padj) & test_cellline$log2FoldChange < 0]
+  
+  up_fdr.log2 <- test_cellline[test_cellline$padj < 0.05 & !is.na(test_cellline$padj) & test_cellline$log2FoldChange >= 1]
+  down_fdr.log2 <- test_cellline[test_cellline$padj < 0.05 & !is.na(test_cellline$padj) & test_cellline$log2FoldChange <= -1] 
+  up_fdr_0.1 <- test_cellline[test_cellline$padj <= 0.1 & !is.na(test_cellline$padj) & test_cellline$log2FoldChange > 0]
+  down_fdr_0.1 <- test_cellline[test_cellline$padj <= 0.1 & !is.na(test_cellline$padj) & test_cellline$log2FoldChange < 0]
+  
+  up_fdr.log2_0.1 <- test_cellline[test_cellline$padj <= 0.1 & !is.na(test_cellline$padj) & test_cellline$log2FoldChange >= 1]
+  down_fdr.log2_0.1 <- test_cellline[test_cellline$padj <= 0.1 & !is.na(test_cellline$padj) & test_cellline$log2FoldChange <= -1] 
+  cat("#####\n No. of Differential regions identified:\nfdr_up\n")
+  print(length(up_fdr))
+  print("fdr_down")
+  print(length(down_fdr))
+  
+  #function to create data frame for output generation
+  create_output =function(df,flag){
+    if(flag==1) df=df[order(df$padj)]
+    if(flag==2) df=df[order(df$pvalue)]
+    gr1 <- data.frame(chr=seqnames(df),
+                      start=start(df)-1,
+                      end=end(df),
+                      log2Foldchange=df$log2FoldChange,
+                      pvalue=df$pvalue,
+                      padj=df$padj)  
+    
+  }
+
+  if(length(up_fdr)){
+    up.regions=create_output(up_fdr,1)
+    write.table(up.regions, file=paste0("fdr0.05/",outputname,"_DESEQ2_up_fdr0.05.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  }
+  if(length(down_fdr))
+  {
+    down.regions=create_output(down_fdr,1)
+    write.table(down.regions,file=paste0("fdr0.05/",outputname,"_DESEQ2_down_fdr0.05.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  }
+  if(length(up_fdr.log2)){
+    up.regions=create_output(up_fdr.log2,1)
+    write.table(up.regions, file=paste0("fdr0.05/fold2/",outputname,"_DESEQ2.fold2_up_fdr0.05.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  }
+  if(length(down_fdr.log2))
+  {
+    down.regions=create_output(down_fdr.log2,1)
+    write.table(down.regions,file=paste0("fdr0.05/fold2/",outputname,"_DESEQ2.fold2_down_fdr0.05.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  }
+  
+    if(length(up_fdr_0.1)){
+    up.regions=create_output(up_fdr_0.1,1)
+    write.table(up.regions, file=paste0("fdr0.1/",outputname,"_DESEQ2_up_fdr0.1.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+    }
+  if(length(down_fdr_0.1))
+  {
+    down.regions=create_output(down_fdr_0.1,1)
+    write.table(down.regions,file=paste0("fdr0.1/",outputname,"_DESEQ2_down_fdr0.1.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  }
+  if(length(up_fdr.log2_0.1)){
+    up.regions=create_output(up_fdr.log2_0.1,1)
+    write.table(up.regions, file=paste0("fdr0.1/fold2/",outputname,"_DESEQ2.fold2_up_fdr0.1.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  }
+  if(length(down_fdr.log2_0.1))
+  {
+    down.regions=create_output(down_fdr.log2_0.1,1)
+    write.table(down.regions,file=paste0("fdr0.1/fold2/",outputname,"_DESEQ2.fold2_down_fdr0.1.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  }
+  
+  #Ontology & pathway analysis
+  if(length(up_fdr)+length(down_fdr) > 10){
+    kegg(create_output(up_fdr,1),create_output(down_fdr,1),"hg19",outputname)
+  }
+  
+  up <- test_cellline[test_cellline$log2FoldChange > 0 & !is.na(test_cellline$pvalue)]
+  top_up = create_output(up,2)
+  down = test_cellline[test_cellline$log2FoldChange < 0 & !is.na(test_cellline$pvalue)]
+  top_down = create_output(down,2)
+  
+  write.table(top_up, file=paste0("otheroutput/",outputname,"_DESEQ2_up_sortpval.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  write.table(top_up, file=paste0("otheroutput/",outputname,"_DESEQ2_up_sortpval.bed"), quote=F, sep="\t", row.names=F, col.names=F)
+  write.table(head(top_up,n=100L), file=paste0("otheroutput/",outputname,"_DESEQ2_up_sortpval_top100.bed"), 
+              quote=F, sep="\t", row.names=F, col.names=F)
+  
+  write.table(top_down, file=paste0("otheroutput/",outputname,"_DESEQ2_down_sortpval.bed"), quote=F, sep="\t", row.names=F, col.names=T)
+  write.table(top_down, file=paste0("otheroutput/",outputname,"_DESEQ2_down_sortpval.bed"), quote=F, sep="\t", row.names=F, col.names=F)
+  write.table(head(top_down,n=100L), file=paste0("otheroutput/",outputname,"_DESEQ2_down_sortpval_top100.bed"),
+              quote=F, sep="\t", row.names=F, col.names=F)
+
+  data <- plotPCA(rld1, intgroup="cellline", returnData=TRUE)
+  percentVar <- round(100 * attr(data, "percentVar"))
+  #pdf(file =  paste0("plots/",output.name,"_RNA_PCA.pdf"))
+  ggplot(data, aes(PC1, PC2,label=rownames(colData(rld1))))+ theme_bw() +
+    theme(axis.line = element_line(colour = "black"),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank(),
+          #panel.border = element_blank(),
+          panel.background = element_blank()) +
+   geom_text(col=showcols[factor(a$name)],size=2.5,check_overlap = FALSE)+
+    xlab(paste0("PC1: ",percentVar[1],"% variance")) +
+    ylab(paste0("PC2: ",percentVar[2],"% variance"))
+  ggsave(filename =paste0("plots/MDS_PCA_Heatmap/",outputname,"_atac_PCA.pdf") )
+}
+
+```
+
+# create directories
+```{r}
+mainDir=getwd()
+subDir="plots"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="plots/MDS_PCA_Heatmap"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.05"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.05/fold2"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="fdr0.1/fold2"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="otheroutput"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="countdata"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="annotation"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+subDir="ontology"
+dir.create(file.path(mainDir,subDir), showWarnings = FALSE)
+```
+
+# Read counts table
+```{r}
+path="data/"
+df = read.table(paste0(path,"atac_rawcounts.tsv"),sep="\t",header=T,row.names = 1)
+head(df[,1:5])
+dim(df)
+```
+
+
+# Read metainfo
+```{r}
+design.matrix = read.table(paste0(path,"atac_design_matrix.tsv"),sep="\t",header = T,row.names = 1)
+design.matrix = as.data.frame(design.matrix[match(colnames(df),rownames(design.matrix)),])
+design.matrix
+```
+
+#write design matrix
+```{r}
+write.table(df,file = "atac_rawcounts.tsv",sep = "\t",quote = F, col.names = NA)
+write.table(design.matrix,file = "atac_design_matrix.tsv",sep = "\t", quote = F, col.names = NA)
+```
+
+# Granges for all regions
+```{r}
+bedfile="atac_peaks.merged.bed"
+totalwindows=create_granges_frombed3(paste0(path,bedfile))
+length(totalwindows)
+df_new <- df1[ rowSums(df1) > 100,  ]
+paste0(nrow(df_new),"*",ncol(df_new))
+totalwindows_new = create_grangesnew_frombed3(data.frame(totalwindows)[as.logical(rowSums(df1) >100),])
+nrow(df_new)
+length(totalwindows_new)
+```
+
+
+# DESEQ2 call parent vs non parent
+```{r}
+dds  = DESeqDataSetFromMatrix(countData= df_new, colData= design.matrix, ~ culture + dissociation_treatment + celllinetargetorgan , rowRanges=totalwindows_new)
+dds =  DESeq(dds)#, minReplicatesForReplace=Inf)
+# dds <- estimateSizeFactors(dds)
+# dds <- estimateDispersions(dds)
+# dds <- nbinomWaldTest(dds, maxit=500)
+rld <-varianceStabilizingTransformation(dds,blind = TRUE)
+ret <- counts(dds, normalized=T) 
+write.table(ret,file = "countdata/atac_countdata_DESEQ2_norm.tsv",sep="\t",row.names = TRUE,quote = FALSE,col.names = NA)
+write.table(assay(rld),file = "countdata/atac_countdata_RLD_norm.tsv",sep="\t",row.names = TRUE,quote = FALSE,col.names = NA)
+```
+
+#save image
+```{r}
+resultsNames(dds)
+#save.image(file = "atacdifferential_uniquedissociation.RData")
+```
+
+# 4.1 Brx68brai vs Brx68H
+```{r}
+outputname = "Comparison4.1_Brx68brain-vs-68parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan","Brx68brai","Brx68H"),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68brai")]) >= 10) >= 1
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+# 4.5 Brx68lung vs Brx68H
+```{r}
+outputname = "Comparison4.5_Brx68lung-vs-68parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan","Brx68lung","Brx68H"),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68lung")]) >= 10) >= 1
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+# 1.1 Brx07lung vs Brx07H
+```{r}
+outputname = "Comparison1.1_Brx07lung-vs-07parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan","Brx07lung","Brx07H"),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07lung")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+# 1.2 Brx07ovar vs Brx07H
+```{r}
+outputname = "Comparison1.2_Brx07ovar-vs-07parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan","Brx07ovar","Brx07H"),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07ovar")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+# 2.1 Brx42brai vs Brx07H
+```{r}
+outputname = "Comparison2.1_Brx42brai-vs-42parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan","Brx42brai","Brx42H"),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx42brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx42H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+
+# 3.1 Brx50brai vs Brx07H
+```{r}
+outputname = "Comparison3.1_Brx50brai-vs-50parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan","Brx50brai","Brx50H"),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx50brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+# 3.2 Brx50bone vs Brx07H
+```{r}
+outputname = "Comparison3.2_Brx50bone-vs-42parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan","Brx50bone","Brx50H"),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx50bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+
+# ComparisonA.mets-vs-parents weights
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,1/9,1/9,1/9,1/9,-1/4,1/9,1/9,-1/4,1/9,1/9,-1/4,1/9))
+wt
+sum(wt$b)
+```
+
+
+# mets-vs-parents
+```{r}
+outputname = "ComparisonA_mets-vs-parent"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,1/9,1/9,1/9,1/9,-1/4,1/9,1/9,-1/4,1/9,1/9,-1/4,1/9),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx50H","Brx68H","Brx07H","Brx42H")]) >= 10) >= 4
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07lung","Brx07ovar","Brx07lynd", "Brx07kidn","Brx42brai","Brx42ovar","Brx50brai","Brx50bone", "Brx68lung","Brx68bone","Brx68brai")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+ summary(res.sub)
+rld.sub = rld
+print(outputname)
+createoutput(res.sub,rld.sub, outputname)
+#ret <- counts(dds, normalized=T) 
+# write.table(ret, paste0("countdata/",outputname,"countdata_norm.txt"),sep="\t",row.names = TRUE,quote = FALSE,col.names = NA)
+# createoutput(res.sub, outputname)
+# plotfigures(rld.sub)
+# kegg(res.sub, outputname,"hg19")
+# plotheatmap(res.sub,rld1,20,outputname,"parenttype")
+```
+
+# ComparisonB_Brx07allmets-vs-07parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,1/3,1/3,1/3,0,0,0,0,0,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+# ComparisonB_Brx07allmets-vs-07parents
+```{r}
+outputname = "ComparisonB_Brx07allmets-vs-07parents"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,1/3,1/3,1/3,0,0,0,0,0,0,0,0,0),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07lynd","Brx07lung","Brx07ovar")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+
+
+# ComparisonC_Brx42allmets-vs-42parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,1,-1,0,0,0,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonC_Brx42allmets-vs-42parents"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0,1,-1,0,0,0,0,0,0,0),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx42ovar","Brx42brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx42H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+# ComparisonD_Brx50allmets-vs-50parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,0,0,0.5,0.5,-1,0,0,0,0))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonD_Brx50allmets-vs-50parents"
+res = results(dds, alpha=0.05, contrast =c(0,0,0,0,0,0,0,0,0,0,0.5,0.5,-1,0,0,0,0),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx50brai","Brx50bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx50H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+
+
+# ComparisonE_Brx68allmets-vs-68parents
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,0,0,0,0,0,1/3,1/3,-1,1/3))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonE_Brx68allmets-vs-68parents"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0,0,0,0,0,0,1/3,1/3,-1,1/3),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68bone","Brx68brai","Brx68lung")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+```{r}
+resultsNames(dds)
+```
+
+#brain vs other mets weights
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/6,-1/6,-1/6,1/3,0,-1/6,1/3,0,-1/6,1/3,0,-1/6))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonI_brain-vs-othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/6,-1/6,-1/6,1/3,0,-1/6,1/3,0,-1/6,1/3,0,-1/6),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx42brai","Brx50brai","Brx68brai")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07lung","Brx07ovar","Brx07kidn","Brx42ovar","Brx50bone", "Brx68lung","Brx68bone")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+#lung vs other mets weights
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/7,1/2,-1/7,-1/7,0,-1/7,-1/7,0,-1/7,-1/7,0,1/2))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonII_lung-vs-othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/7,1/2,-1/7,-1/7,0,-1/7,-1/7,0,-1/7,-1/7,0,1/2),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07lung","Brx68lung")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx42brai","Brx50brai","Brx68brai","Brx07ovar","Brx07kidn","Brx42ovar","Brx50bone", "Brx68lung","Brx68bone")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+#bone vs other mets weights
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/7,-1/7,-1/7,-1/7,0,1/2,-1/7,0,1/2,-1/7,0,-1/7))
+wt
+sum(wt$b)
+```
+
+
+```{r}
+outputname = "ComparisonIII_bone-vs-othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/7,-1/7,-1/7,-1/7,0,1/2,-1/7,0,1/2,-1/7,0,-1/7),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx50bone","Brx68bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07lung","Brx68lung","Brx42brai","Brx50brai","Brx68brai","Brx07ovar","Brx07kidn","Brx42ovar","Brx68lung")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+#ovary vs other mets weights
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/8,-1/8,1,-1/8,0,-1/8,-1/8,0,-1/8,-1/8,0,-1/8))
+wt
+sum(wt$b)
+```
+
+```{r}
+outputname = "ComparisonIV_ovary-vs-othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/8,-1/8,1,-1/8,0,-1/8,-1/8,0,-1/8,-1/8,0,-1/8),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07ovar","Brx42ovar")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx07lung","Brx68lung","Brx42brai","Brx50brai","Brx68brai","Brx07kidn","Brx68lung","Brx50bone","Brx68bone")]) >= 10) >= 10
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+```{r}
+resultsNames(dds)
+```
+
+
+# 4.2 Brx68bone vs Brx68H
+```{r}
+outputname = "Comparison4.2_Brx68bone-vs-68parents"
+res = results(dds, alpha=0.05, contrast = c("celllinetargetorgan","Brx68bone","Brx68H"),format = "GRanges")
+keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68bone")]) >= 10) >= 2
+keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68H")]) >= 10) >= 2
+res.sub = res[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+```{r}
+resultsNames(dds)
+```
+
+#4.3 Brx68bonemets vs Brx68othermets
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,0,0,0,0,0,1,-1/2,0,-1/2))
+wt
+sum(wt$b)
+```
+
+
+
+# 4.3 Brx68bonemets vs Brx68othermets
+```{r}
+outputname = "Comparison4.3_Brx68bonemets-vs-68othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0,0,0,0,0,0,1,-1/2,0,-1/2),format = "GRanges")
+#keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68bone")]) >= 10) >= 2
+#keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68brai,Brx68lung")]) >= 10) >= 1
+res.sub = res#[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+
+# 4.4 Brx68bonemetsplusparents vs Brx68othermets
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0,0,0,0,0,0,1/2,-1/2,1/2,-1/2))
+wt
+sum(wt$b)
+```
+
+# 4.4 Brx68bonemetsplusparents vs Brx68othermets
+```{r}
+outputname = "Comparison4.4_Brx68bonemetsplusparents-vs-68othermets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0,0,0,0,0,0,1/2,-1/2,1/2,-1/2),format = "GRanges")
+#keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68bone,Brx68H")]) >= 10) >= 2
+#keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68brai,Brx68lung")]) >= 10) >= 1
+res.sub = res#[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```
+
+
+# ComparisonF_ 4250brainmetsplusparents-vs-0768mets
+```{r}
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,-1/6,-1/6,-1/6,1/4,1/4,0,1/4,1/4,-1/6,0,-1/6,-1/6))
+wt
+sum(wt$b)
+```
+
+# F.4250brainmetsplusparents-vs-0768mets
+```{r}
+outputname = "ComparisonF_4250brainmetsplusparents-vs-0768mets"
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,-1/6,-1/6,-1/6,1/4,1/4,0,1/4,1/4,-1/6,0,-1/6,-1/6),format = "GRanges")
+#keep1 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68bone")]) >= 10) >= 2
+#keep2 = rowSums(counts(dds[,dds$celllinetargetorgan %in% c("Brx68brai,Brx68lung")]) >= 10) >= 1
+res.sub = res#[keep1 & keep2,]
+summary(res.sub)
+rld.sub = rld
+print(outputname)
+colData(rld.sub)
+createoutput(res.sub,rld.sub, outputname)
+```

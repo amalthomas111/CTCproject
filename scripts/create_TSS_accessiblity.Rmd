@@ -96,17 +96,17 @@ getmetaplot = function(file1,file2,name1,name2,target_gene){
 
 ```
 
-plot for MYC, SEMA4D, GPX1, GCLC
-```{r}
-getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw",
-            "50brain","50parents","MYC")
-getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw",
-            "50brain","50parents","SEMA4D")
-getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw",
-            "50brain","50parents","GPX1")
-getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw",
-            "50brain","50parents","GCLC")
-```
+<!-- plot for MYC, SEMA4D, GPX1, GCLC -->
+<!-- ```{r} -->
+<!-- getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw", -->
+<!--             "50brain","50parents","MYC") -->
+<!-- getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw", -->
+<!--             "50brain","50parents","SEMA4D") -->
+<!-- getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw", -->
+<!--             "50brain","50parents","GPX1") -->
+<!-- getmetaplot("data/bigwigs/50brain.cuts.bw","data/bigwigs/50parents.cuts.bw", -->
+<!--             "50brain","50parents","GCLC") -->
+<!-- ``` -->
 
 ```{r}
 getmetaplot("data/bigwigs/brainmets.cuts.bw",
