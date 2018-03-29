@@ -3,7 +3,7 @@ This repository contains custom scripts used to process the data, generate the r
 
 ### Copyright
 
-  Copyright (C) 2015 University of Southern California
+  Copyright (C) 2018 University of Southern California
 
   You can redistribute it and/or modify it under the terms of the GNU General Public License as published by
   the Free Software Foundation, either version 3 of the License, or
