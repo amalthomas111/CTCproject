@@ -34,13 +34,18 @@ suppressPackageStartupMessages({
 register(MulticoreParam(4))
 ```
 
+
+
 Function to plot barplot for pathway analysis
 ```{r  , echo=FALSE}
 barplot = function(df, showCategory){
   #df = df[with(df, order(ratio, padj, decreasing = c(TRUE, FALSE))),]
   df = df[with(df, order( padj, decreasing = c(FALSE))),]
   df = head(df, n=showCategory)
+  df = df[order(df$padj,decreasing = c(TRUE)),]
   breaks = round( c(0, 1/4, 2/4, 3/4, 1) * max(df[['ratio']]) , 2)
+  df = df %>% mutate(term = factor(term,term))
+  
   p_plot = ggplot(df, aes_string(x="term", y="ratio", fill="padj")) + 
     geom_col() + scale_y_continuous(expand=c(0, 0),
     breaks=breaks, limits=c(0, max(df[["ratio"]]+0.05))) +
@@ -49,10 +54,12 @@ barplot = function(df, showCategory){
     scale_color_gradient(low="blue", high="red") +
     ylab("Ratio of DE genes in Category") +
     xlab("KEGG pathway")
+  #ggsave(p_plot,filename = "3.1.brainmenv-vs-braincontrols_GO_UP.pdf",dpi = 300)
   #scale_fill_continuous(low="#00dbde", high="#FFF94C") + 
   return(p_plot)
 }
 ```
+
 
 Function to plot dotplot for pathway analysis
 ```{r, echo=FALSE}
@@ -316,11 +323,8 @@ colnames(symbols) <- c("ensembl_gene_id", "gene_symbol")
 # read counts table
 ```{r}
 path="data/"
-df = read.table(paste0(path,"RNAseqhg19mm10_menv_count.tsv"),sep="\t",row.names = 1,header = TRUE)
-paste0(nrow(df),"*",ncol(df))
-exclude = c("X07ovar.menv.27.2","X07ovar.menv.28.2","X42brai.menv.66.1","X42ovar.menv.73.1","X68bone.menv.26.1")
-length(exclude)
-df = df[,!colnames(df) %in% exclude]
+df = read.table(paste0(path,"RNAseqhg19mm10_menv_rawcounts.tsv"),sep="\t",row.names = 1,header = TRUE)
+dim(df)
 mouse.genes = rownames(df)[grep("^ENSMUSG", rownames(df))]
 dim(df)
 df = df[mouse.genes,]
@@ -329,6 +333,7 @@ df1 = df[rowSums(df) > 10,]
 dim(df)
 ```
 
+
 read design matrix
 
 ```{r}
@@ -336,11 +341,7 @@ design.matrix = read.table("data/RNAseq_menv_design_matrix.tsv",
                            sep = "\t",row.names = 1,header = T)
 design.matrix
 ```
-relevel design matrix
-```{r}
-design.matrix$tissuecellline = relevel(design.matrix$tissuecellline,ref="kidnBrx68")
-design.matrix
-```
+
 
  DESEQ2 call
 ```{r}
@@ -356,56 +357,12 @@ write.table(assay(rld),file = "data/menv_countdata_RLD_norm.tsv",sep="\t",row.na
 ```
 
 
-# bone menv vs bone control
-```{r}
-wt=data.frame(a=resultsNames(dds),b=c(0,1/3,1/3,1/3,-1,0,0,0,0,0,0,0))
-wt
-sum(wt$b)
-```
 
- bone mets vs bone control
-```{r}
-outputname = "1.1.bonemenv-vs-bonecontrols"
-res = results(dds, alpha=0.05, contrast = c(0,1/3,1/3,1/3,-1,0,0,0,0,0,0,0))
-keep1 = rowSums(counts(dds[,dds$tissuecellline %in% c("boneBrx07","boneBrx50","boneBrx68")]) >= 5) >= 2
-keep2 = rowSums(counts(dds[,dds$tissuecellline %in% c("bonecontrol")]) >= 5) >= 1
-res.sub = res[keep1 & keep2,]
-summary(res.sub)
-rld.sub = rld[ , rld$tissuecellline %in% c("boneBrx07","boneBrx50","boneBrx68","bonecontrol") ]
-print(outputname)
-colData(rld.sub)
-createoutput(res.sub, outputname)
-plotfigures(rld.sub,outputname)
-kegg(res.sub, outputname,"mm10")
-```
-
-lung menv vs lung control
-```{r}
-wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,0,0,0.25,0.25,0.25,0.25,-1))
-wt
-sum(wt$b)
-```
-
-2.1 lung menv vs lung control
-```{r}
-outputname = "2.1.lungmenv-vs-lungcontrols"
-res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,0,0,0.25,0.25,0.25,0.25,-1))
-keep1 = rowSums(counts(dds[,dds$tissuecellline %in% c("lungBrx07","lungBrx42","lungBrx50","lungBrx68")]) >= 5) >= 2
-keep2 = rowSums(counts(dds[,dds$tissuecellline %in% c("lungcontrol")]) >= 5) >= 1
-res.sub = res[keep1 & keep2,]
-summary(res.sub)
-rld.sub = rld[ , rld$tissuecellline %in% c("lungBrx07","lungBrx42","lungBrx50","lungBrx68","lungcontrol") ]
-print(outputname)
-colData(rld.sub)
-createoutput(res.sub, outputname)
-plotfigures(rld.sub,outputname)
-kegg(res.sub, outputname,"mm10")
-```
 
 
 brai menv vs brai control
 ```{r}
-wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,0,1,-1,0,0,0,0,0))
+wt=data.frame(a=resultsNames(dds),b=c(0,0,0,0,1,-1,0,0,0,0,0))
 wt
 sum(wt$b)
 ```
@@ -413,7 +370,7 @@ sum(wt$b)
 3.1 brai menv vs brai control
 ```{r}
 outputname = "3.1.brainmenv-vs-braincontrols"
-res = results(dds, alpha=0.05, contrast = c(0,0,0,0,0,1,-1,0,0,0,0,0))
+res = results(dds, alpha=0.05, contrast = c(0,0,0,0,1,-1,0,0,0,0,0))
 keep1 = rowSums(counts(dds[,dds$tissuecellline %in% c("braiBrx50")]) >= 5) >= 2
 keep2 = rowSums(counts(dds[,dds$tissuecellline %in% c("braicontrol")]) >= 5) >= 1
 res.sub = res[keep1 & keep2,]
