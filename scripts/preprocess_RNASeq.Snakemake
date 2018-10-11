@@ -50,7 +50,6 @@ rule map_single_end:
         --runThreadN 8\
         --outBAMsortingThreadN 8\
         --outWigType wiggle\
-        --outWigStrand Unstranded\
         --outWigNorm RPM\
         --readFilesCommand cat\
         --genomeDir {config[index]}\
